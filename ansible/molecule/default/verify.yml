@@ -1,0 +1,69 @@
+---
+- name: Molecule verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Verify molecule run
+      ansible.builtin.assert:
+        that:
+          - true
+
+    - name: Syntax check main playbook
+      ansible.builtin.command: ansible-playbook playbooks/proxmox.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check validation playbook
+      ansible.builtin.command: ansible-playbook playbooks/validate-postinstall.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check smoke-test playbook
+      ansible.builtin.command: ansible-playbook playbooks/smoke-test.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check lxc-docker playbook
+      ansible.builtin.command: ansible-playbook playbooks/lxc-docker.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check nvidia-docker playbook
+      ansible.builtin.command: ansible-playbook playbooks/nvidia-docker.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check network-configure playbook
+      ansible.builtin.command: ansible-playbook playbooks/network-configure.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check lvm-to-zfs playbook
+      ansible.builtin.command: ansible-playbook playbooks/lvm-to-zfs.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check zfs-create playbook
+      ansible.builtin.command: ansible-playbook playbooks/zfs-create.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check zfs-slog-cache playbook
+      ansible.builtin.command: ansible-playbook playbooks/zfs-slog-cache.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+    - name: Syntax check tinc-vpn playbook
+      ansible.builtin.command: ansible-playbook playbooks/tinc-vpn.yml --syntax-check
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false

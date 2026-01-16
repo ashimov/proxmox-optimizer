@@ -1,0 +1,83 @@
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+.project
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+venv/
+.venv/
+ENV/
+env/
+.env
+*.env.local
+
+# Ansible
+*.retry
+.molecule/
+.cache/
+ansible/.vagrant/
+ansible/collections/ansible_collections/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.pid
+/tmp/
+.history/
+.history
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+id_rsa*
+*.p12
+credentials.json
+secrets.yml
+vault.yml
+*vault*.yml
+
+# Local configuration
+install-post.env
+*.local
+*.local.yml
+*.local.yaml
+
+# Test output
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/
+nosetests.xml

@@ -1,0 +1,34 @@
+###### ashimov.com
+
+### LOOPBACK ###
+auto lo
+iface lo inet loopback
+iface lo inet6 loopback
+
+### IPv4 ###
+# Main IPv4 from Host
+auto {{ proxmox_primary_interface }}
+iface {{ proxmox_primary_interface }} inet manual
+
+### VM-Bridge used by Proxmox (Routed)
+auto {{ proxmox_bridge_name }}
+iface {{ proxmox_bridge_name }} inet static
+  address {{ proxmox_bridge_address }}
+  netmask {{ proxmox_bridge_netmask }}
+  gateway {{ proxmox_bridge_gateway }}
+  pointopoint {{ proxmox_bridge_gateway }}
+  bridge_ports {{ proxmox_primary_interface }}
+  bridge_stp off
+  bridge_fd 0
+  bridge_maxwait 0
+
+{% if proxmox_ipv6_address | length > 0 and proxmox_ipv6_gateway | length > 0 %}
+### IPv6 ###
+iface {{ proxmox_bridge_name }} inet6 static
+  address {{ proxmox_ipv6_address }}
+  netmask {{ proxmox_ipv6_netmask }}
+  gateway {{ proxmox_ipv6_gateway }}
+{% endif %}
+
+### Load extra files
+source /etc/network/interfaces.d/*

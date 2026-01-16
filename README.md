@@ -26,6 +26,7 @@
 
 - [🎯 Supported Versions](#-supported-versions)
 - [🚀 Quick Start](#-quick-start)
+- [🧰 Ansible Automation](#-ansible-automation)
 - [💡 Features](#-features)
 - [📦 Installation Scripts](#-installation-scripts)
   - [Post-Installation Optimizer](#-post-installation-optimizer)
@@ -49,7 +50,6 @@
 | **Proxmox VE** | 9.x | Trixie (13) | ✅ Fully Supported |
 | **Proxmox VE** | 8.x | Bookworm (12) | ✅ Fully Supported |
 | **Proxmox Backup Server** | 3.x | Bookworm (12) | ✅ Fully Supported |
-| **Proxmox VE** | 7.x | Bullseye (11) | ⚠️ Deprecated |
 
 ---
 
@@ -66,6 +66,123 @@ wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-
 > 💡 **Note:** Reboot after installation to apply all changes.
 
 ---
+
+## 🧰 Ansible Automation
+
+For repeatable, idempotent automation, use the Ansible roles and playbooks in `ansible/`.
+
+### Requirements
+
+- Full `ansible` package (ansible-core is not supported)
+- Python 3.11+
+- Collections: `ansible.utils`, `ansible.posix`
+
+### Quick Start
+
+```bash
+cd ansible
+
+# Install required collections
+ansible-galaxy collection install -r collections/requirements.yml
+
+# Configure inventory
+cp inventory/hosts.ini.example inventory/hosts.ini
+nano inventory/hosts.ini
+
+# Run full optimization
+ansible-playbook playbooks/proxmox.yml -i inventory/hosts.ini
+```
+
+### Available Roles
+
+| Role                    | Description                                |
+|-------------------------|--------------------------------------------|
+| `proxmox_base`          | Repositories, packages, APT configuration  |
+| `proxmox_security`      | Fail2ban, Lynis, rpcbind hardening         |
+| `proxmox_tuning`        | Sysctl, journald, KSM, MOTD, limits        |
+| `proxmox_zfs`           | ZFS ARC tuning, auto-snapshots             |
+| `proxmox_vfio`          | IOMMU, VFIO for PCIe passthrough           |
+| `proxmox_networking`    | vmbr0 routed bridge configuration          |
+| `proxmox_lxc_docker`    | Docker support for LXC containers          |
+| `proxmox_nvidia`        | NVIDIA Docker runtime for GPU passthrough  |
+| `proxmox_zfs_slog_cache`| Convert MD RAID to ZFS SLOG/cache          |
+| `proxmox_tinc_vpn`      | Tinc VPN mesh network for clusters         |
+| `provider_ovh`          | OVH RTM installer, auto-detection          |
+| `provider_hetzner`      | Hetzner network tuning, Storage Box        |
+
+### Configuration
+
+All variables can be customized in `inventory/group_vars/all.yml`:
+
+```yaml
+# Security
+xs_fail2ban: "yes"
+xs_disablerpc: "yes"
+xs_lynis: "yes"
+
+# Performance
+xs_tcpbbr: "yes"
+xs_ksmtuned: "yes"
+xs_pigz: "yes"
+
+# ZFS
+xs_zfsarc: "yes"
+xs_zfsautosnapshot: "no"
+```
+
+### Dangerous Operations
+
+Some playbooks perform destructive operations and require explicit confirmation:
+
+```bash
+# Network configuration (overwrites /etc/network/interfaces)
+ansible-playbook playbooks/network-configure.yml -e dangerous_confirm=yes
+
+# LVM to ZFS conversion
+ansible-playbook playbooks/lvm-to-zfs.yml -e dangerous_confirm=yes
+
+# ZFS pool creation
+ansible-playbook playbooks/zfs-create.yml -e dangerous_confirm=yes
+
+# ZFS SLOG/cache (converts MD RAID - destructive!)
+ansible-playbook playbooks/zfs-slog-cache.yml
+
+# Docker in LXC (security-sensitive)
+ansible-playbook playbooks/lxc-docker.yml -e lxc_docker_container_id=100 -e lxc_docker_confirm=true
+```
+
+### Tinc VPN Mesh Setup
+
+Deploy Tinc VPN across multiple nodes:
+
+```bash
+# Configure inventory with per-host variables
+# inventory/hosts.ini:
+# [proxmox_nodes]
+# node1 tinc_vpn_ip_last=1 tinc_connect_to=node2
+# node2 tinc_vpn_ip_last=2 tinc_connect_to=node3
+# node3 tinc_vpn_ip_last=3 tinc_connect_to=node1
+
+ansible-playbook playbooks/tinc-vpn.yml -i inventory/hosts.ini
+```
+
+### Secrets Management
+
+Never store credentials in version control. Use `host_vars/` with ansible-vault:
+
+```bash
+# Create encrypted host vars
+ansible-vault create inventory/host_vars/myhost/vault.yml
+
+# Run playbook with vault
+ansible-playbook playbooks/proxmox.yml --ask-vault-pass
+```
+
+### Documentation
+
+- [ansible/README.md](ansible/README.md) - Full Ansible documentation
+- [MIGRATION.md](MIGRATION.md) - Migration guide from shell scripts
+- [ansible/playbooks/README.md](ansible/playbooks/README.md) - Playbook reference
 
 ## 💡 Features
 
@@ -149,6 +266,14 @@ export XS_MOTD="no"
 bash install-post.sh
 ```
 
+#### Logging
+
+By default, output is written to `/var/log/ashimov-install-post.log`. Disable or change it with:
+```bash
+export XS_LOG_FILE=""
+export XS_LOG_FILE="/path/to/custom.log"
+```
+
 <details>
 <summary>📋 <b>Click to view all configuration options</b></summary>
 
@@ -170,15 +295,22 @@ bash install-post.sh
 | `XS_KSMTUNED` | yes | KSM memory optimization |
 | `XS_LIMITS` | yes | Increase system limits |
 | `XS_LOGROTATE` | yes | Optimize log rotation |
+| `XS_LOG_FILE` | /var/log/ashimov-install-post.log | Install-post log file (empty to disable) |
 | `XS_LYNIS` | yes | Security scanning tool |
+| `XS_CISOFY_KEY_URL` | https://packages.cisofy.com/keys/cisofy-software-public.key | Override Cisofy key URL |
 | `XS_MAXFS` | yes | Increase FS limits |
 | `XS_MEMORYFIXES` | yes | Memory optimizations |
 | `XS_MOTD` | yes | Custom MOTD banner |
 | `XS_NET` | yes | Network optimizations |
+| `XS_MANAGE_SOURCES_LIST` | yes | Manage /etc/apt/sources.list (clean installs) |
 | `XS_NOENTREPO` | yes | Disable enterprise repo |
+| `XS_PROXMOX_KEY_URL` | empty | Override Proxmox key URL (auto by OS codename if empty) |
 | `XS_NOSUBBANNER` | yes | Remove subscription banner |
 | `XS_OPENVSWITCH` | no | Install Open vSwitch |
 | `XS_OVHRTM` | yes | OVH RTM monitoring |
+| `XS_OVHRTM_ALLOW_UNVERIFIED` | no | Allow running OVH RTM installer without checksum verification |
+| `XS_OVHRTM_SHA256` | empty | SHA256 checksum for OVH RTM installer (recommended) |
+| `XS_OVHRTM_URL` | https://last-public-ovh-infra-yak.snap.mirrors.ovh.net/yak/archives/apply.sh | Override OVH RTM installer URL |
 | `XS_PIGZ` | yes | Parallel gzip compression |
 | `XS_SWAPPINESS` | yes | Fix high swap usage |
 | `XS_TCPBBR` | yes | TCP BBR congestion control |
@@ -186,6 +318,8 @@ bash install-post.sh
 | `XS_TESTREPO` | no | Enable testing repo |
 | `XS_TIMESYNC` | yes | NTP time sync |
 | `XS_TIMEZONE` | auto | Set timezone by IP |
+| `XS_IPINFO_URL` | https://ipinfo.io/ip | Override public IP lookup endpoint |
+| `XS_IPAPI_URL` | https://ipapi.co | Override timezone lookup base URL |
 | `XS_UTILS` | yes | Install system utilities |
 | `XS_VZDUMP` | yes | Optimize backup speed |
 | `XS_ZFSARC` | yes | ZFS ARC optimization |
@@ -214,20 +348,13 @@ chmod +x debian12-2-proxmox8.sh
 ./debian12-2-proxmox8.sh
 ```
 
-#### Debian 11 → Proxmox VE 7 ⚠️ Deprecated
-```bash
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/debian-2-proxmox/debian11-2-proxmox7.sh
-chmod +x debian11-2-proxmox7.sh
-./debian11-2-proxmox7.sh
-```
-
-> ⚠️ **Warning:** Proxmox 7 is end-of-life. Please use Proxmox 8 or 9.
+**Note:** To allow the conversion scripts to download `install-post.sh`, set `XS_ALLOW_REMOTE_INSTALL_POST=yes` and `XS_INSTALL_POST_SHA256=<expected_sha256>`.
 
 **Prerequisites:**
 - Clean Debian installation with valid FQDN hostname
 - Tested on KVM, VirtualBox, and Dedicated Servers
 - Automatically handles cloud-init and `/etc/hosts` configuration
-- Runs post-installation optimizer automatically
+- Runs post-installation optimizer automatically (local `install-post.sh` or allow remote download with checksum)
 
 ---
 
@@ -303,8 +430,10 @@ Create ZFS pool from specified devices with automatic RAID detection.
 ```bash
 wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/createzfs.sh -c -O createzfs.sh
 chmod +x createzfs.sh
-./createzfs.sh poolname /dev/sda /dev/sdb
+ZFS_CONFIRM=yes ./createzfs.sh poolname /dev/sda /dev/sdb
+ZFS_DRYRUN=yes ./createzfs.sh poolname /dev/sda /dev/sdb
 ```
+Dry-run prints planned actions and exits non-zero without changes.
 
 **RAID Level Detection:**
 | Drives | RAID Level | Type |
@@ -341,7 +470,7 @@ chmod +x benchmark_zfs.sh
 
 ### Network Configuration
 
-Create routed (vmbr0) and NAT (vmbr1) network bridges with DHCP support.
+Create routed vmbr0 network bridge for Proxmox VMs.
 
 ```bash
 wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh -c -O network-configure.sh
@@ -350,20 +479,11 @@ chmod +x network-configure.sh
 ```
 
 **Features:**
-- **vmbr0 (Routed):** Public IPs with physical interface MAC
-- **vmbr1 (NAT):** Private network 10.10.10.0/24 with DHCP (100-200)
+
+- **vmbr0 (Routed):** Public IPs routed through physical interface
 - Auto-detects interface, gateway, and netmask
 - Supports IPv4 and IPv6
-
-### Add IP Range
-
-Add additional IP ranges to network configuration.
-
-```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-addiprange.sh -c -O network-addiprange.sh
-chmod +x network-addiprange.sh
-./network-addiprange.sh ip.xx.xx.xx/cidr [interface]
-```
+- Creates backup of existing configuration
 
 ### Tinc VPN
 
@@ -456,6 +576,46 @@ zfs-auto-snapshot --verbose --label=prerollback -r //
 # Rollback to snapshot
 zfs rollback <snapshotname>
 ```
+
+---
+
+## 🔐 Security: Script Verification
+
+For security, always verify downloaded scripts before execution. Use SHA256 checksums to ensure script integrity.
+
+### Verifying Scripts
+
+```bash
+# Download the script
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh
+
+# Generate checksum and compare with published value
+sha256sum install-post.sh
+
+# Or verify in one command (replace EXPECTED_CHECKSUM with actual value)
+echo "EXPECTED_CHECKSUM  install-post.sh" | sha256sum -c -
+```
+
+### Environment Variables for Checksum Verification
+
+| Script | Checksum Variable | Allow Unverified Variable |
+|--------|-------------------|---------------------------|
+| `install-post.sh` | `XS_INSTALL_POST_SHA256` | `XS_ALLOW_REMOTE_INSTALL_POST` |
+| OVH RTM installer | `XS_OVHRTM_SHA256` | `XS_OVHRTM_ALLOW_UNVERIFIED` |
+| Hetzner post-install | `MY_POSTINSTALL_SHA256` | `MY_POSTINSTALL_ALLOW_UNVERIFIED` |
+
+### Example: Secure Remote Installation
+
+```bash
+# Set the expected SHA256 checksum (get from releases or compute yourself)
+export XS_INSTALL_POST_SHA256="your_checksum_here"
+export XS_ALLOW_REMOTE_INSTALL_POST="yes"
+
+# Run the conversion script - it will verify the checksum before execution
+./debian12-2-proxmox8.sh
+```
+
+> ⚠️ **Important**: Never set `*_ALLOW_UNVERIFIED=yes` in production. Always use checksums.
 
 ---
 

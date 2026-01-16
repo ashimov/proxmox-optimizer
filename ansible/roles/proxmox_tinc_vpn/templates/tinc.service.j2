@@ -1,0 +1,15 @@
+[Unit]
+Description=Tinc VPN - {{ tinc_network_name }}
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/etc/tinc/{{ tinc_network_name }}
+ExecStart=/usr/sbin/tincd -n {{ tinc_network_name }} -D -d2
+ExecReload=/usr/sbin/tincd -n {{ tinc_network_name }} -kHUP
+TimeoutStopSec=5
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

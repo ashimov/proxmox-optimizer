@@ -1,0 +1,5 @@
+Address = {{ tinc_public_ip }}
+Subnet = {{ tinc_vpn_subnet }}.{{ tinc_vpn_ip_last }}
+Port = {{ tinc_port }}
+Compression = {{ tinc_compression }}
+{{ rsa_public_key.content | b64decode }}

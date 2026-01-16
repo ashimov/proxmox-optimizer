@@ -1,0 +1,83 @@
+---
+- name: Validate post-install settings
+  hosts: proxmox
+  become: true
+  gather_facts: true
+
+  vars:
+    validate_xs_amdfixes: "{{ xs_amdfixes | default('no') }}"
+    validate_xs_openvswitch: "{{ xs_openvswitch | default('no') }}"
+    validate_xs_ifupdown2: "{{ xs_ifupdown2 | default('yes') }}"
+    validate_xs_guestagent: "{{ xs_guestagent | default('yes') }}"
+    validate_openvswitch_expected: "{{ validate_xs_openvswitch | lower == 'yes' and validate_xs_ifupdown2 | lower != 'yes' }}"
+    validate_network_stack_ok: >-
+      {{
+        (validate_openvswitch_expected and ('openvswitch-switch' in ansible_facts.packages) and ('ifupdown2' not in ansible_facts.packages))
+        or
+        (not validate_openvswitch_expected and ('ifupdown2' in ansible_facts.packages) and ('openvswitch-switch' not in ansible_facts.packages))
+      }}
+
+  tasks:
+    - name: Check for Proxmox
+      ansible.builtin.stat:
+        path: /etc/pve/.version
+      register: pve_version_file
+
+    - name: Abort if not Proxmox
+      ansible.builtin.assert:
+        that: pve_version_file.stat.exists
+        fail_msg: "This playbook requires Proxmox VE"
+
+    - name: Detect AMD EPYC or Ryzen
+      ansible.builtin.set_fact:
+        validate_amd_detected: "{{ ('EPYC' in (ansible_facts['processor'] | join(' '))) or ('Ryzen' in (ansible_facts['processor'] | join(' '))) }}"
+
+    - name: Validate GRUB idle=nomwait
+      ansible.builtin.command: grep -q "idle=nomwait" /etc/default/grub
+      changed_when: false
+      when: validate_xs_amdfixes | lower == "yes" and validate_amd_detected
+
+    - name: Validate KVM ignore_msrs
+      ansible.builtin.command: grep -q "ignore_msrs=Y" /etc/modprobe.d/kvm.conf
+      changed_when: false
+      when: validate_xs_amdfixes | lower == "yes" and validate_amd_detected
+
+    - name: Collect package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Validate guest agent on KVM/QEMU
+      ansible.builtin.assert:
+        that:
+          - "'qemu-guest-agent' in ansible_facts.packages"
+        fail_msg: "Expected qemu-guest-agent for KVM/QEMU guests"
+      when:
+        - validate_xs_guestagent | lower == "yes"
+        - ansible_virtualization_role == "guest"
+        - ansible_virtualization_type in ["kvm", "qemu"]
+
+    - name: Validate guest agent on VMware
+      ansible.builtin.assert:
+        that:
+          - "'open-vm-tools' in ansible_facts.packages"
+        fail_msg: "Expected open-vm-tools for VMware guests"
+      when:
+        - validate_xs_guestagent | lower == "yes"
+        - ansible_virtualization_role == "guest"
+        - ansible_virtualization_type == "vmware"
+
+    - name: Validate guest agent on VirtualBox
+      ansible.builtin.assert:
+        that:
+          - "'virtualbox-guest-utils' in ansible_facts.packages"
+        fail_msg: "Expected virtualbox-guest-utils for VirtualBox guests"
+      when:
+        - validate_xs_guestagent | lower == "yes"
+        - ansible_virtualization_role == "guest"
+        - ansible_virtualization_type == "oracle"
+
+    - name: Validate Open vSwitch/ifupdown2 selection
+      ansible.builtin.assert:
+        that:
+          - validate_network_stack_ok
+        fail_msg: "Open vSwitch/ifupdown2 packages do not match xs_openvswitch/xs_ifupdown2 selection"

@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: ashimov
+  description: Configure NVIDIA Docker runtime for GPU support
+  license: BSD
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - nvidia
+    - docker
+    - gpu
+
+dependencies: []

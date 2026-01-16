@@ -1,0 +1,41 @@
+---
+# Tinc VPN network name
+tinc_network_name: "xsvpn"
+
+# VPN subnet (10.10.1.0/24 by default)
+tinc_vpn_subnet: "10.10.1"
+tinc_vpn_netmask: "24"
+
+# Last octet of VPN IP for this host (e.g., 1 = 10.10.1.1)
+tinc_vpn_ip_last: 1
+
+# Tinc port
+tinc_port: 655
+
+# Public IP address (auto-detected if not set)
+tinc_public_ip: ""
+
+# Hostname to connect to (another node in the mesh)
+tinc_connect_to: ""
+
+# RSA key size
+tinc_rsa_key_size: 4096
+
+# Compression level (10 = LZO)
+tinc_compression: 10
+
+# Enable IP forwarding
+tinc_ip_forwarding: false
+
+# List of other hosts in the mesh (for key distribution)
+# Format:
+# tinc_hosts:
+#   - name: host1
+#     address: 11.11.11.11
+#     subnet: 10.10.1.1
+#     port: 655
+#     public_key: |
+#       -----BEGIN RSA PUBLIC KEY-----
+#       ...
+#       -----END RSA PUBLIC KEY-----
+tinc_hosts: []

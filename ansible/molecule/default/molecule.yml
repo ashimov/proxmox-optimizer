@@ -1,0 +1,29 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ../../collections/requirements.yml
+
+driver:
+  name: delegated
+
+platforms:
+  - name: localhost
+    hosts: localhost
+    ansible_connection: local
+
+provisioner:
+  name: ansible
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+
+lint: |
+  cd ../..
+  ansible-lint -c ../.ansible-lint playbooks/ roles/
+
+scenario:
+  test_sequence:
+    - lint
+    - converge
+    - verify

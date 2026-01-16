@@ -1,0 +1,93 @@
+---
+# proxmox_lxc_docker role - Configure LXC container for Docker support
+# ============================================================================
+# WARNING: This role disables security features and should only be used
+# when you understand the implications. A dedicated VM is recommended.
+# ============================================================================
+
+- name: Display security warning
+  ansible.builtin.debug:
+    msg: |
+      ================================================================================
+        SECURITY WARNING: Running Docker in LXC Container
+      ================================================================================
+
+        This role will configure the LXC container to run Docker by:
+          - Disabling AppArmor confinement (lxc.apparmor.profile: unconfined)
+          - Allowing access to all devices (lxc.cgroup.devices.allow: a)
+          - Dropping no capabilities (lxc.cap.drop: empty)
+          - Loading kernel modules (aufs, ip_tables)
+          - Mounting proc and sys as read-write
+
+        RISKS:
+          - Container escape vulnerabilities become more severe
+          - Compromised container could affect host system
+          - Not recommended for production or multi-tenant environments
+
+        RECOMMENDATION:
+          Use a dedicated VM (QEMU/KVM) for Docker workloads instead.
+
+      ================================================================================
+
+- name: Fail if container ID is not provided
+  ansible.builtin.fail:
+    msg: "lxc_docker_container_id is required"
+  when: lxc_docker_container_id | length == 0
+
+- name: Fail if confirmation not provided
+  ansible.builtin.fail:
+    msg: |
+      You must explicitly confirm you understand the security implications.
+      Set lxc_docker_confirm: true in your playbook or inventory.
+  when: not lxc_docker_confirm
+
+- name: Set container config path
+  ansible.builtin.set_fact:
+    lxc_config_path: "/etc/pve/lxc/{{ lxc_docker_container_id }}.conf"
+
+- name: Check if container config exists
+  ansible.builtin.stat:
+    path: "{{ lxc_config_path }}"
+  register: lxc_config_stat
+
+- name: Fail if container config not found
+  ansible.builtin.fail:
+    msg: "Container config {{ lxc_config_path }} not found"
+  when: not lxc_config_stat.stat.exists
+
+- name: Install cgroupfs-mount
+  ansible.builtin.apt:
+    name: cgroupfs-mount
+    state: present
+
+- name: Read current container config
+  ansible.builtin.slurp:
+    src: "{{ lxc_config_path }}"
+  register: lxc_config_content
+
+- name: Add Docker configuration lines
+  ansible.builtin.lineinfile:
+    path: "{{ lxc_config_path }}"
+    line: "{{ item }}"
+    state: present
+  loop: "{{ lxc_docker_config_lines }}"
+  register: lxc_config_changed
+
+- name: Stop container for restart
+  ansible.builtin.command: "lxc-stop --name {{ lxc_docker_container_id }}"
+  when:
+    - lxc_docker_restart_container
+    - lxc_config_changed.changed
+  changed_when: true
+  failed_when: false
+
+- name: Start container
+  ansible.builtin.command: "lxc-start --name {{ lxc_docker_container_id }}"
+  when:
+    - lxc_docker_restart_container
+    - lxc_config_changed.changed
+  changed_when: true
+
+- name: Docker support configured
+  ansible.builtin.debug:
+    msg: "Docker support added to container {{ lxc_docker_container_id }}"

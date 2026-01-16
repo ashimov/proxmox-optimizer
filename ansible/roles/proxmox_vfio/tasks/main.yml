@@ -1,0 +1,105 @@
+- name: Set kernel version facts
+  ansible.builtin.set_fact:
+    kernel_major: "{{ ansible_kernel.split('.')[0] | int }}"
+    kernel_minor: "{{ ansible_kernel.split('.')[1] | int }}"
+
+- name: Set VFIO CPU vendor facts
+  ansible.builtin.set_fact:
+    vfio_is_intel: "{{ 'GenuineIntel' in (ansible_facts['processor'] | join(' ')) }}"
+    vfio_is_amd: "{{ 'AuthenticAMD' in (ansible_facts['processor'] | join(' ')) }}"
+
+- name: Check for GRUB_CMDLINE_LINUX_DEFAULT
+  ansible.builtin.command: grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub
+  register: grub_cmdline_check
+  changed_when: false
+  failed_when: false
+  when: xs_vfio_iommu | lower == "yes" and (vfio_is_intel or vfio_is_amd)
+
+- name: Ensure GRUB_CMDLINE_LINUX_DEFAULT exists
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    line: 'GRUB_CMDLINE_LINUX_DEFAULT=""'
+    insertafter: EOF
+    create: yes
+  when: xs_vfio_iommu | lower == "yes" and (vfio_is_intel or vfio_is_amd) and grub_cmdline_check.rc != 0
+
+- name: Ensure Intel IOMMU parameters in GRUB cmdline
+  ansible.builtin.replace:
+    path: /etc/default/grub
+    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=")(?!.*\b{{ item }}\b)([^"]*)"'
+    replace: '\1\2 {{ item }}"'
+  loop:
+    - intel_iommu=on
+    - iommu=pt
+  when: xs_vfio_iommu | lower == "yes" and vfio_is_intel
+  notify:
+    - Update grub
+    - Refresh EFI boot
+
+- name: Ensure AMD IOMMU parameters in GRUB cmdline
+  ansible.builtin.replace:
+    path: /etc/default/grub
+    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=")(?!.*\b{{ item }}\b)([^"]*)"'
+    replace: '\1\2 {{ item }}"'
+  loop:
+    - amd_iommu=on
+    - iommu=pt
+  when: xs_vfio_iommu | lower == "yes" and vfio_is_amd
+  notify:
+    - Update grub
+    - Refresh EFI boot
+
+- name: Configure VFIO modules
+  ansible.builtin.blockinfile:
+    path: /etc/modules
+    create: yes
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - vfio-modules"
+    block: |
+      vfio
+      vfio_iommu_type1
+      vfio_pci
+      {% if kernel_major < 6 or (kernel_major == 6 and kernel_minor < 2) %}
+      vfio_virqfd
+      {% endif %}
+  when: xs_vfio_iommu | lower == "yes"
+  notify:
+    - Update initramfs
+    - Refresh EFI boot
+
+- name: Blacklist GPU drivers
+  ansible.builtin.blockinfile:
+    path: /etc/modprobe.d/blacklist.conf
+    create: yes
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - vfio-blacklist"
+    block: |
+      blacklist nouveau
+      blacklist lbm-nouveau
+      options nouveau modeset=0
+      blacklist amdgpu
+      blacklist radeon
+      blacklist nvidia
+      blacklist nvidiafb
+  when: xs_vfio_iommu | lower == "yes"
+  notify:
+    - Update initramfs
+    - Refresh EFI boot
+
+- name: Remove VFIO modules block when disabled
+  ansible.builtin.blockinfile:
+    path: /etc/modules
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - vfio-modules"
+    state: absent
+  when: xs_vfio_iommu | lower != "yes"
+  notify:
+    - Update initramfs
+    - Refresh EFI boot
+
+- name: Remove VFIO GPU blacklist when disabled
+  ansible.builtin.blockinfile:
+    path: /etc/modprobe.d/blacklist.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - vfio-blacklist"
+    state: absent
+  when: xs_vfio_iommu | lower != "yes"
+  notify:
+    - Update initramfs
+    - Refresh EFI boot

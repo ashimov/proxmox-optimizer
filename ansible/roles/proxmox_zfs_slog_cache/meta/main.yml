@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: Berik Ashimov
+  description: Convert MD RAID devices to ZFS SLOG/cache for Proxmox VE
+  license: BSD
+  min_ansible_version: "2.10"
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+  galaxy_tags:
+    - proxmox
+    - zfs
+    - slog
+    - cache
+    - storage
+
+dependencies:
+  - role: proxmox_base

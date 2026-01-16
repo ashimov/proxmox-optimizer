@@ -35,7 +35,61 @@ export LC_ALL="C"
 
 container_id="$1"
 
+# Validate container ID
+if [ -z "$container_id" ]; then
+  echo "ERROR: Container ID is required"
+  echo "Usage: $0 <container_id>"
+  exit 1
+fi
+
+# Container ID must be numeric (Proxmox uses numeric IDs)
+if ! [[ "$container_id" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: Invalid container ID. Must be numeric."
+  exit 1
+fi
+
+# Proxmox container IDs are typically 100-999999999
+if [ "$container_id" -lt 100 ] || [ "$container_id" -gt 999999999 ]; then
+  echo "ERROR: Container ID out of valid range (100-999999999)"
+  exit 1
+fi
+
 container_config="/etc/pve/lxc/$container_id.conf"
+
+# Security Warning
+echo "================================================================================"
+echo "  SECURITY WARNING: Running Docker in LXC Container"
+echo "================================================================================"
+echo ""
+echo "  This script will configure the LXC container to run Docker by:"
+echo "    - Disabling AppArmor confinement (lxc.apparmor.profile: unconfined)"
+echo "    - Allowing access to all devices (lxc.cgroup.devices.allow: a)"
+echo "    - Dropping no capabilities (lxc.cap.drop: empty)"
+echo "    - Loading kernel modules (aufs, ip_tables)"
+echo "    - Mounting proc and sys as read-write"
+echo ""
+echo "  RISKS:"
+echo "    - Container escape vulnerabilities become more severe"
+echo "    - Compromised container could affect host system"
+echo "    - Not recommended for production or multi-tenant environments"
+echo ""
+echo "  RECOMMENDATION:"
+echo "    Use a dedicated VM (QEMU/KVM) for Docker workloads instead."
+echo "    See: https://github.com/ashimov/ashimov-docker"
+echo ""
+echo "================================================================================"
+echo ""
+
+# Require explicit confirmation unless LXC_DOCKER_CONFIRM is set
+if [ "${LXC_DOCKER_CONFIRM:-}" != "yes" ]; then
+  echo "To proceed, run with LXC_DOCKER_CONFIRM=yes:"
+  echo "  LXC_DOCKER_CONFIRM=yes $0 $container_id"
+  echo ""
+  exit 1
+fi
+
+echo "Confirmation received. Proceeding with configuration..."
+echo ""
 
 function addlineifnotfound { #$file #$line
   if [ "$1" == "" ] || [ "$2" == "" ] ; then

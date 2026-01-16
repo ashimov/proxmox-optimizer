@@ -123,7 +123,7 @@ chmod +x lvm-2-zfs.sh
 # REBOOT
 ```
 
-### 2. Network Configuration (vmbr0 + vmbr1)
+### 2. Network Configuration (vmbr0)
 
 ```bash
 wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh -c -O network-configure.sh

@@ -1,0 +1,154 @@
+---
+# Tinc VPN mesh setup for Proxmox cluster
+
+- name: Install tinc
+  ansible.builtin.apt:
+    name: tinc
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Install tinc (RedHat)
+  ansible.builtin.yum:
+    name: tinc
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Set node name (replace - with _)
+  ansible.builtin.set_fact:
+    tinc_node_name: "{{ ansible_hostname | replace('-', '_') }}"
+
+- name: Detect public IP if not specified
+  when: tinc_public_ip | length == 0
+  block:
+    - name: Get default interface
+      ansible.builtin.shell: |
+        set -o pipefail
+        ip route | awk '/default/ { print $5 }' | grep -v "vmbr" | head -1
+      args:
+        executable: /bin/bash
+      register: default_iface
+      changed_when: false
+
+    - name: Get public IP from default interface
+      ansible.builtin.shell: |
+        set -o pipefail
+        ip -4 addr show dev {{ default_iface.stdout | trim }} | awk '/inet/ { print $2 }' | cut -d'/' -f1
+      args:
+        executable: /bin/bash
+      register: detected_ip
+      changed_when: false
+      when: default_iface.stdout | trim | length > 0
+
+    - name: Set detected public IP
+      ansible.builtin.set_fact:
+        tinc_public_ip: "{{ detected_ip.stdout | trim }}"
+      when: detected_ip.stdout is defined and detected_ip.stdout | trim | length > 0
+
+- name: Fail if no public IP
+  ansible.builtin.fail:
+    msg: "Could not detect public IP. Please set tinc_public_ip manually."
+  when: tinc_public_ip | length == 0
+
+- name: Create tinc directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "/etc/tinc/{{ tinc_network_name }}"
+    - "/etc/tinc/{{ tinc_network_name }}/hosts"
+
+- name: Check if RSA keys exist
+  ansible.builtin.stat:
+    path: "/etc/tinc/{{ tinc_network_name }}/rsa_key.priv"
+  register: rsa_key_stat
+
+- name: Generate RSA keys
+  ansible.builtin.command: >
+    tincd -K{{ tinc_rsa_key_size }} -c /etc/tinc/{{ tinc_network_name }}
+  args:
+    stdin: "\n\n"
+  when: not rsa_key_stat.stat.exists
+  changed_when: true
+
+- name: Read public key
+  ansible.builtin.slurp:
+    src: "/etc/tinc/{{ tinc_network_name }}/rsa_key.pub"
+  register: rsa_public_key
+
+- name: Create tinc.conf
+  ansible.builtin.template:
+    src: tinc.conf.j2
+    dest: "/etc/tinc/{{ tinc_network_name }}/tinc.conf"
+    mode: "0644"
+  notify: Restart tinc
+
+- name: Create host configuration
+  ansible.builtin.template:
+    src: host.j2
+    dest: "/etc/tinc/{{ tinc_network_name }}/hosts/{{ tinc_node_name }}"
+    mode: "0644"
+  notify: Restart tinc
+
+- name: Create tinc-up script
+  ansible.builtin.template:
+    src: tinc-up.j2
+    dest: "/etc/tinc/{{ tinc_network_name }}/tinc-up"
+    mode: "0755"
+  notify: Restart tinc
+
+- name: Create tinc-down script
+  ansible.builtin.template:
+    src: tinc-down.j2
+    dest: "/etc/tinc/{{ tinc_network_name }}/tinc-down"
+    mode: "0755"
+  notify: Restart tinc
+
+- name: Deploy other hosts configurations
+  ansible.builtin.template:
+    src: remote_host.j2
+    dest: "/etc/tinc/{{ tinc_network_name }}/hosts/{{ item.name | replace('-', '_') }}"
+    mode: "0644"
+  loop: "{{ tinc_hosts }}"
+  when: tinc_hosts | length > 0
+  notify: Restart tinc
+
+- name: Create systemd service
+  ansible.builtin.template:
+    src: tinc.service.j2
+    dest: "/etc/systemd/system/tinc-{{ tinc_network_name }}.service"
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart tinc
+
+- name: Ensure interfaces.d is sourced
+  ansible.builtin.lineinfile:
+    path: /etc/network/interfaces
+    line: "source /etc/network/interfaces.d/*"
+    create: true
+    mode: "0644"
+
+- name: Create network interface configuration
+  ansible.builtin.template:
+    src: interface.cfg.j2
+    dest: /etc/network/interfaces.d/tinc-vpn.cfg
+    mode: "0644"
+
+- name: Enable tinc service
+  ansible.builtin.systemd:
+    name: "tinc-{{ tinc_network_name }}"
+    enabled: true
+    daemon_reload: true
+
+- name: Display host info for other nodes
+  ansible.builtin.debug:
+    msg: |
+      To add this host to other nodes, run on each node:
+
+      cat <<EOF >> /etc/tinc/{{ tinc_network_name }}/hosts/{{ tinc_node_name }}
+      Address = {{ tinc_public_ip }}
+      Subnet = {{ tinc_vpn_subnet }}.{{ tinc_vpn_ip_last }}
+      Port = {{ tinc_port }}
+      Compression = {{ tinc_compression }}
+      {{ rsa_public_key.content | b64decode }}EOF

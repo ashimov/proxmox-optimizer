@@ -1,0 +1,81 @@
+---
+- name: Disable rpcbind
+  ansible.builtin.systemd:
+    name: rpcbind
+    enabled: false
+    state: stopped
+  when: xs_disablerpc | lower == "yes"
+
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+  when: xs_fail2ban | lower == "yes"
+
+- name: Configure fail2ban filter
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/filter.d/proxmox.conf
+    content: |
+      [Definition]
+      failregex = pvedaemon\[.*authentication failure; rhost=<HOST> user=.* msg=.*
+      ignoreregex =
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_fail2ban | lower == "yes"
+  notify: Restart fail2ban
+
+- name: Configure fail2ban jail
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/proxmox.conf
+    content: |
+      [proxmox]
+      enabled = true
+      port = https,http,8006,8007
+      filter = proxmox
+      logpath = /var/log/daemon.log
+      maxretry = 3
+      bantime = 3600
+      findtime = 600
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_fail2ban | lower == "yes"
+  notify: Restart fail2ban
+
+- name: Enable fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+  when: xs_fail2ban | lower == "yes"
+
+- name: Ensure apt keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: xs_lynis | lower == "yes"
+
+- name: Download Lynis signing key
+  ansible.builtin.get_url:
+    url: https://packages.cisofy.com/keys/cisofy-software-public.key
+    dest: /etc/apt/keyrings/cisofy-software.asc
+    mode: "0644"
+  when: xs_lynis | lower == "yes"
+
+- name: Configure Lynis repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/cisofy-software.asc] https://packages.cisofy.com/community/lynis/deb/ stable main"
+    filename: cisofy-lynis
+    state: present
+  when: xs_lynis | lower == "yes"
+
+- name: Install Lynis
+  ansible.builtin.apt:
+    name: lynis
+    state: present
+    update_cache: true
+  when: xs_lynis | lower == "yes"

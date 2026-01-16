@@ -1,0 +1,8 @@
+---
+profile: min
+skip_list:
+  - yaml
+  - var-naming
+  - risky-shell-pipe
+  - risky-file-permissions
+  - no-changed-when

@@ -1,0 +1,5 @@
+---
+- name: Reload Docker daemon
+  ansible.builtin.command: pkill -SIGHUP dockerd
+  failed_when: false
+  changed_when: true

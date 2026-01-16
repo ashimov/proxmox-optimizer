@@ -1,0 +1,51 @@
+---
+# Convert MD RAID devices to ZFS SLOG/cache
+# WARNING: This is a DESTRUCTIVE operation that will destroy all data on the MD devices
+
+- name: Fail if confirmation not provided
+  ansible.builtin.fail:
+    msg: |
+      DESTRUCTIVE OPERATION: This role will destroy MD RAID arrays and convert them to ZFS cache/SLOG.
+      All data on {{ zfs_cache_mount_point }} and {{ zfs_slog_mount_point }} will be PERMANENTLY LOST.
+      Set zfs_slog_cache_confirm=true to confirm you understand the risks.
+  when: not zfs_slog_cache_confirm | bool
+
+- name: Ensure zfsutils-linux is installed
+  ansible.builtin.apt:
+    name: zfsutils-linux
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Ensure zfs module is loaded
+  community.general.modprobe:
+    name: zfs
+    state: present
+
+- name: Check if ZFS pool exists
+  ansible.builtin.command: zpool status {{ zfs_pool_name }}
+  register: zpool_status
+  changed_when: false
+  failed_when: zpool_status.rc != 0
+
+- name: Process cache mount point
+  ansible.builtin.include_tasks: convert_md_to_zfs.yml
+  vars:
+    mount_point: "{{ zfs_cache_mount_point }}"
+    zfs_vdev_type: "cache"
+  when: zfs_cache_mount_point | length > 0
+
+- name: Process SLOG mount point
+  ansible.builtin.include_tasks: convert_md_to_zfs.yml
+  vars:
+    mount_point: "{{ zfs_slog_mount_point }}"
+    zfs_vdev_type: "log"
+  when: zfs_slog_mount_point | length > 0
+
+- name: Display ZFS pool status
+  ansible.builtin.command: zpool iostat -v {{ zfs_pool_name }} -L
+  register: final_status
+  changed_when: false
+
+- name: Show final pool status
+  ansible.builtin.debug:
+    var: final_status.stdout_lines

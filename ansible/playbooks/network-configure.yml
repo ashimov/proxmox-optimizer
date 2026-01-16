@@ -1,0 +1,148 @@
+---
+- name: Dangerous ops - configure networking
+  hosts: proxmox
+  become: true
+  gather_facts: true
+
+  vars:
+    dangerous_confirm: "no"
+    dangerous_backup_dir: "/root/ansible-backups"
+    network_dhcp_public: "no"
+    network_script_path: "/root/ansible-scripts/network-configure.sh"
+
+  pre_tasks:
+    - name: Check for Proxmox
+      ansible.builtin.stat:
+        path: /etc/pve/.version
+      register: pve_version_file
+
+    - name: Abort if not Proxmox
+      ansible.builtin.assert:
+        that: pve_version_file.stat.exists
+        fail_msg: "This playbook requires Proxmox VE"
+
+    - name: Abort in LXC containers
+      ansible.builtin.assert:
+        that: ansible_virtualization_type | default('') != 'lxc'
+        fail_msg: "This playbook must not run inside an LXC container"
+
+    - name: Show requested operation
+      ansible.builtin.debug:
+        msg: "Requested network configuration with XS_DHCP_PUBLIC={{ network_dhcp_public }}"
+
+    - name: Require confirmation for destructive action
+      ansible.builtin.debug:
+        msg: "Dry run only. Re-run with -e dangerous_confirm=yes to apply."
+      when: dangerous_confirm | lower != "yes"
+
+    - name: End play without changes
+      ansible.builtin.meta: end_play
+      when: dangerous_confirm | lower != "yes"
+
+  tasks:
+    - name: Ensure backup directory exists
+      ansible.builtin.file:
+        path: "{{ dangerous_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Set backup stamp
+      ansible.builtin.set_fact:
+        backup_stamp: "{{ ansible_date_time.epoch }}"
+
+    - name: Backup /etc/network/interfaces
+      ansible.builtin.stat:
+        path: /etc/network/interfaces
+      register: interfaces_stat
+
+    - name: Save /etc/network/interfaces backup
+      ansible.builtin.copy:
+        src: /etc/network/interfaces
+        dest: "{{ dangerous_backup_dir }}/interfaces-{{ backup_stamp }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+      when: interfaces_stat.stat.exists
+
+    - name: Backup /etc/dhcp/dhcpd.conf
+      ansible.builtin.stat:
+        path: /etc/dhcp/dhcpd.conf
+      register: dhcpd_stat
+
+    - name: Save /etc/dhcp/dhcpd.conf backup
+      ansible.builtin.copy:
+        src: /etc/dhcp/dhcpd.conf
+        dest: "{{ dangerous_backup_dir }}/dhcpd.conf-{{ backup_stamp }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+      when: dhcpd_stat.stat.exists
+
+    - name: Backup /etc/default/isc-dhcp-server
+      ansible.builtin.stat:
+        path: /etc/default/isc-dhcp-server
+      register: isc_dhcp_stat
+
+    - name: Save /etc/default/isc-dhcp-server backup
+      ansible.builtin.copy:
+        src: /etc/default/isc-dhcp-server
+        dest: "{{ dangerous_backup_dir }}/isc-dhcp-server-{{ backup_stamp }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+      when: isc_dhcp_stat.stat.exists
+
+    - name: Capture current network state
+      ansible.builtin.command: ip addr
+      register: ip_addr_out
+      changed_when: false
+
+    - name: Capture current routes
+      ansible.builtin.command: ip route
+      register: ip_route_out
+      changed_when: false
+
+    - name: Write preflight backup report
+      ansible.builtin.copy:
+        dest: "{{ dangerous_backup_dir }}/network-configure-{{ backup_stamp }}.log"
+        content: |
+          ## Network configure preflight
+          XS_DHCP_PUBLIC={{ network_dhcp_public }}
+
+          == ip addr ==
+          {{ ip_addr_out.stdout | default('') }}
+
+          == ip route ==
+          {{ ip_route_out.stdout | default('') }}
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Ensure scripts directory exists
+      ansible.builtin.file:
+        path: "{{ network_script_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy network-configure script to target
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../networking/network-configure.sh"
+        dest: "{{ network_script_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Run network-configure script
+      ansible.builtin.command:
+        argv:
+          - "{{ network_script_path }}"
+      environment:
+        XS_DHCP_PUBLIC: "{{ network_dhcp_public }}"
+      changed_when: true

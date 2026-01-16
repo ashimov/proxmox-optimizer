@@ -1,0 +1,363 @@
+---
+- name: Check for Proxmox
+  ansible.builtin.stat:
+    path: /etc/pve/.version
+  register: pve_version_file
+
+- name: Abort if not Proxmox
+  ansible.builtin.fail:
+    msg: "This role requires Proxmox VE"
+  when: not pve_version_file.stat.exists
+
+- name: Set OS codename
+  ansible.builtin.set_fact:
+    proxmox_os_codename: "{{ ansible_facts.get('lsb', {}).get('codename', ansible_facts.get('distribution_release', '')) }}"
+
+- name: Abort if OS codename is missing
+  ansible.builtin.fail:
+    msg: "Unable to determine Debian codename"
+  when: proxmox_os_codename is not defined or proxmox_os_codename | length == 0
+
+- name: Configure APT language downloads
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99-xs-disable-translations
+    content: "Acquire::Languages \"none\";\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_noaptlang | lower == "yes" and xs_lang == "en_US.UTF-8"
+
+- name: Remove APT language override when disabled
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/99-xs-disable-translations
+    state: absent
+  when: not (xs_noaptlang | lower == "yes" and xs_lang == "en_US.UTF-8")
+
+- name: Configure APT IPv4 preference
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99-xs-force-ipv4
+    content: "Acquire::ForceIPv4 \"true\";\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_aptipv4 | lower == "yes"
+
+- name: Remove APT IPv4 override when disabled
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/99-xs-force-ipv4
+    state: absent
+  when: xs_aptipv4 | lower != "yes"
+
+- name: Set Debian components
+  ansible.builtin.set_fact:
+    proxmox_debian_components: "{{ 'main contrib non-free non-free-firmware' if proxmox_os_codename in ['bookworm', 'trixie'] else 'main contrib non-free' }}"
+  when: xs_manage_sources_list | lower == "yes"
+
+- name: Render Debian sources list
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list
+    content: |
+      deb https://deb.debian.org/debian {{ proxmox_os_codename }} {{ proxmox_debian_components }}
+      deb https://deb.debian.org/debian {{ proxmox_os_codename }}-updates {{ proxmox_debian_components }}
+      deb https://security.debian.org/debian-security {{ proxmox_os_codename }}-security {{ proxmox_debian_components }}
+    owner: root
+    group: root
+    mode: "0644"
+    backup: yes
+  when: xs_manage_sources_list | lower == "yes"
+
+- name: Check for Proxmox release keyring
+  ansible.builtin.stat:
+    path: "/etc/apt/keyrings/proxmox-release-{{ proxmox_os_codename }}.gpg"
+  register: proxmox_release_keyring
+  when: xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+
+- name: Check for Proxmox archive keyring
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  register: proxmox_archive_keyring
+  when: xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+
+- name: Set Proxmox repository key facts
+  ansible.builtin.set_fact:
+    proxmox_repo_key_path: >-
+      {{ '/usr/share/keyrings/proxmox-archive-keyring.gpg'
+         if proxmox_archive_keyring.stat.exists
+         else '/etc/apt/keyrings/proxmox-release-' ~ proxmox_os_codename ~ '.gpg' }}
+    proxmox_repo_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-{{ proxmox_os_codename }}.gpg"
+    proxmox_repo_key_needs_download: "{{ not proxmox_release_keyring.stat.exists and not proxmox_archive_keyring.stat.exists }}"
+  when: xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+
+- name: Ensure APT keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+    - proxmox_repo_key_needs_download | default(false)
+
+- name: Set Proxmox key checksum
+  ansible.builtin.set_fact:
+    proxmox_key_checksum: "{{ proxmox_key_checksums[proxmox_os_codename] | default('') }}"
+  when:
+    - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+    - proxmox_repo_key_needs_download | default(false)
+
+- name: Download Proxmox repository key
+  ansible.builtin.get_url:
+    url: "{{ proxmox_repo_key_url }}"
+    dest: "{{ proxmox_repo_key_path }}"
+    mode: "0644"
+    checksum: "{{ proxmox_key_checksum if proxmox_key_checksum | length > 0 else omit }}"
+  when:
+    - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+    - proxmox_repo_key_needs_download | default(false)
+
+- name: Check for enterprise repo
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/pve-enterprise.list
+  register: pve_enterprise_repo
+
+- name: Disable enterprise repo
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list.d/pve-enterprise.list
+    regexp: '^deb'
+    replace: '#deb'
+  when: xs_noentrepo | lower == "yes" and pve_enterprise_repo.stat.exists
+
+- name: Remove legacy Proxmox repo list files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/pve-no-subscription.list
+    - /etc/apt/sources.list.d/pve-install-repo.list
+    - /etc/apt/sources.list.d/proxmox.list
+  when: xs_noentrepo | lower == "yes"
+
+- name: Enable no-subscription repo
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pve-public-repo.list
+    content: "deb [signed-by={{ proxmox_repo_key_path }}] https://download.proxmox.com/debian/pve {{ proxmox_os_codename }} pve-no-subscription\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_noentrepo | lower == "yes"
+
+- name: Remove no-subscription repo when disabled
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pve-public-repo.list
+    state: absent
+  when: xs_noentrepo | lower != "yes"
+
+- name: Enable testing repo
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pve-testing-repo.list
+    content: "deb [signed-by={{ proxmox_repo_key_path }}] https://download.proxmox.com/debian/pve {{ proxmox_os_codename }} pvetest\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_testrepo | lower == "yes"
+
+- name: Remove testing repo when disabled
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pve-testing-repo.list
+    state: absent
+  when: xs_testrepo | lower != "yes"
+
+- name: Find Proxmox repo definition files
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "*.list"
+      - "*.sources"
+    file_type: file
+    contains: 'download\.proxmox\.com/debian/pve'
+  register: proxmox_repo_files
+  when: xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+
+- name: Normalize Proxmox repo signed-by in list files
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^(deb\\s+\\[[^\\]]*?)signed-by=[^\\s\\]]+'
+    replace: '\\1signed-by={{ proxmox_repo_key_path }}'
+  loop: "{{ proxmox_repo_files.files }}"
+  when:
+    - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+    - proxmox_repo_files.matched | default(0) | int > 0
+
+- name: Normalize Proxmox repo signed-by in sources files
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^Signed-By:\\s*\\S+'
+    replace: 'Signed-By: {{ proxmox_repo_key_path }}'
+  loop: "{{ proxmox_repo_files.files }}"
+  when:
+    - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+    - proxmox_repo_files.matched | default(0) | int > 0
+
+- name: Update APT cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Remove conflicting time services
+  ansible.builtin.apt:
+    name:
+      - ntp
+      - openntpd
+      - systemd-timesyncd
+    state: absent
+    purge: true
+
+- name: Install APT dependencies
+  ansible.builtin.apt:
+    name: "{{ xs_apt_dependencies }}"
+    state: present
+
+- name: Upgrade packages
+  ansible.builtin.apt:
+    upgrade: dist
+  when: xs_aptupgrade | lower == "yes"
+
+- name: Update appliance metadata
+  ansible.builtin.command: pveam update
+  changed_when: false
+  when: xs_aptupgrade | lower == "yes"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ xs_base_packages }}"
+    state: present
+
+- name: Set common utilities package list
+  ansible.builtin.set_fact:
+    proxmox_utils_packages: "{{ (xs_utils_packages | reject('equalto', 'mlocate') | list + ['plocate']) | unique }}"
+  when: proxmox_os_codename in ['bookworm', 'trixie', 'sid']
+
+- name: Set common utilities package list (default)
+  ansible.builtin.set_fact:
+    proxmox_utils_packages: "{{ xs_utils_packages }}"
+  when: proxmox_os_codename not in ['bookworm', 'trixie', 'sid']
+
+- name: Check availability of common utilities packages
+  ansible.builtin.command: "apt-cache show {{ item }}"
+  loop: "{{ proxmox_utils_packages }}"
+  register: proxmox_utils_show
+  changed_when: false
+  failed_when: false
+  when: xs_utils | lower == "yes"
+
+- name: Set available common utilities package list
+  ansible.builtin.set_fact:
+    proxmox_utils_packages_available: >-
+      {{ proxmox_utils_show.results
+         | selectattr('rc', 'equalto', 0)
+         | selectattr('stdout', 'search', '(?m)^Package:')
+         | map(attribute='item')
+         | list }}
+  when: xs_utils | lower == "yes"
+
+- name: Report missing common utilities packages
+  ansible.builtin.debug:
+    msg: "Skipping unavailable packages: {{ proxmox_utils_packages | difference(proxmox_utils_packages_available) | join(', ') }}"
+  when:
+    - xs_utils | lower == "yes"
+    - (proxmox_utils_packages | difference(proxmox_utils_packages_available) | length > 0)
+
+- name: Install common utilities
+  ansible.builtin.apt:
+    name: "{{ proxmox_utils_packages_available }}"
+    state: present
+  when:
+    - xs_utils | lower == "yes"
+    - proxmox_utils_packages_available | length > 0
+
+- name: Install kernel headers
+  ansible.builtin.apt:
+    name:
+      - pve-headers
+      - module-assistant
+    state: present
+  when: xs_kernelheaders | lower == "yes"
+
+- name: Install Open vSwitch stack
+  ansible.builtin.apt:
+    name:
+      - ifenslave
+      - ifupdown
+      - openvswitch-switch
+    state: present
+  when: xs_openvswitch | lower == "yes" and xs_ifupdown2 | lower != "yes"
+
+- name: Remove ifupdown2 when Open vSwitch is enabled
+  ansible.builtin.apt:
+    name: ifupdown2
+    state: absent
+  when: xs_openvswitch | lower == "yes" and xs_ifupdown2 | lower != "yes"
+
+- name: Install ifupdown2 stack
+  ansible.builtin.apt:
+    name: ifupdown2
+    state: present
+  when: not (xs_openvswitch | lower == "yes" and xs_ifupdown2 | lower != "yes")
+
+- name: Remove Open vSwitch when ifupdown2 is enabled
+  ansible.builtin.apt:
+    name:
+      - openvswitch-switch
+      - ifenslave
+      - ifupdown
+    state: absent
+  when: not (xs_openvswitch | lower == "yes" and xs_ifupdown2 | lower != "yes")
+
+- name: Enable NTP
+  ansible.builtin.command: timedatectl set-ntp true
+  when: xs_timesync | lower == "yes"
+  changed_when: false
+
+- name: Ensure chrony is enabled
+  ansible.builtin.systemd:
+    name: chrony
+    enabled: true
+    state: started
+  when: xs_timesync | lower == "yes"
+
+- name: Set timezone
+  ansible.builtin.command: timedatectl set-timezone "{{ xs_timezone }}"
+  when: xs_timezone | length > 0
+  changed_when: false
+
+- name: Install guest agent on KVM/QEMU
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+  when:
+    - xs_guestagent | lower == "yes"
+    - ansible_virtualization_role == "guest"
+    - ansible_virtualization_type in ["kvm", "qemu"]
+
+- name: Install guest agent on VMware
+  ansible.builtin.apt:
+    name: open-vm-tools
+    state: present
+  when:
+    - xs_guestagent | lower == "yes"
+    - ansible_virtualization_role == "guest"
+    - ansible_virtualization_type == "vmware"
+
+- name: Install guest agent on VirtualBox
+  ansible.builtin.apt:
+    name: virtualbox-guest-utils
+    state: present
+  when:
+    - xs_guestagent | lower == "yes"
+    - ansible_virtualization_role == "guest"
+    - ansible_virtualization_type == "oracle"
+
+- name: Configure Ceph
+  ansible.builtin.include_tasks: ceph.yml
+  when: xs_ceph | lower == "yes"

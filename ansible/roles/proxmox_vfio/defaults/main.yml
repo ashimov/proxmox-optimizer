@@ -1,0 +1,6 @@
+---
+# Defaults for proxmox_vfio role
+# These can be overridden in inventory/group_vars/all.yml or host_vars
+
+# Enable VFIO IOMMU support for PCIe passthrough
+xs_vfio_iommu: "yes"

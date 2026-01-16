@@ -54,6 +54,10 @@ MY_OS=""
 MY_PVE_MAJOR=""
 # Override Debian codename (bookworm/trixie). Leave blank for auto.
 MY_DEBIAN_CODENAME=""
+# SHA256 checksum for post-install script (recommended for security)
+MY_POSTINSTALL_SHA256=""
+# Allow running unverified post-install script (not recommended)
+MY_POSTINSTALL_ALLOW_UNVERIFIED="FALSE"
 #set size of boot partition or leave blank for autoconfig, will be in gbytes, 1GB or larger
 MY_BOOT=""
 #set size of root partition, will be in gbytes, 10GB or larger
@@ -69,6 +73,11 @@ MY_ZFS_SLOG=""
 # Set the local
 export LANG="en_US.UTF-8"
 export LC_ALL="C"
+
+get_device_size_bytes() {
+  local dev="$1"
+  lsblk -dn -b -o SIZE "/dev/${dev}" 2>/dev/null | head -n 1
+}
 
 # Reconnect to screen, incase of a disconnect
 screen -r proxmox-install && exit 0
@@ -135,8 +144,19 @@ if [[ "$MY_HOSTNAME" != *.* ]] ; then
   echo "ERROR: Please set a FQDN hostname"
   echo "$0 host.name"
   exit 1
-  echo "Hostname: ${MY_HOSTNAME}"
 fi
+# Validate hostname length (max 253 characters per RFC 1035)
+if [ "${#MY_HOSTNAME}" -gt 253 ]; then
+  echo "ERROR: Hostname too long (max 253 characters): ${MY_HOSTNAME}"
+  exit 1
+fi
+# Validate hostname format (RFC 1123)
+if ! [[ "$MY_HOSTNAME" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+  echo "ERROR: Invalid hostname format: ${MY_HOSTNAME}"
+  echo "Hostname must contain only alphanumeric characters, hyphens, and dots"
+  exit 1
+fi
+echo "Hostname: ${MY_HOSTNAME}"
 
 if [ "$MY_USE_LVM" != "" ] && [ "${MY_USE_LVM,,}" != "true" ] && [ "${MY_USE_LVM,,}" != "yes" ]  ; then
   LVM="FALSE"
@@ -181,9 +201,14 @@ NVME_COUNT=${#NVME_ARRAY[@]}
 NVME_TARGET=""
 NVME_TARGET_FIRST=""
 NVME_TARGET_COUNT=0
+NVME_TARGET_SIZE=0
 if [[ $NVME_COUNT -ge 1 ]] ; then
   for nvme_device in "${NVME_ARRAY[@]}"; do
-    if [ "$NVME_FORCE_4K" == "yes" ] ; then
+    if [[ "${NVME_FORCE_4K,,}" == "yes" || "${NVME_FORCE_4K,,}" == "true" ]] ; then
+      if ! command -v nvme >/dev/null 2>&1; then
+        echo "ERROR: nvme tool is required for NVME_FORCE_4K"
+        exit 1
+      fi
       if  [[ $(nvme id-ns "/dev/${nvme_device}" -H | grep "LBA Format" | grep "(in use)" | grep -oP "Data Size\K.*" | cut -d" " -f 2) -ne 4096 ]] ; then
         echo "Appling 4K block size to NVME: ${nvme_device}"
         nvme format "/dev/${nvme_device}" -b 4096 -f || exit 1
@@ -193,14 +218,22 @@ if [[ $NVME_COUNT -ge 1 ]] ; then
         sleep 5
       fi
     fi
+      nvme_size="$(get_device_size_bytes "$nvme_device")"
+      if [ "$nvme_size" == "" ] ; then
+        echo "WARNING: Unable to determine size for ${nvme_device}, skipping"
+        continue
+      fi
       if [ "${NVME_TARGET}" == "" ] ; then
         NVME_TARGET="${nvme_device}"
         NVME_TARGET_FIRST="${nvme_device}"
         NVME_TARGET_COUNT=1
+        NVME_TARGET_SIZE="${nvme_size}"
       else
-        if [[ $(grep "${NVME_TARGET_FIRST}" -m1 /proc/partitions | xargs | cut -d" " -f3) -eq $(grep "${nvme_device}" -m1 /proc/partitions | xargs | cut -d" " -f3) ]]; then
+        if [ "$nvme_size" -eq "$NVME_TARGET_SIZE" ] 2>/dev/null ; then
           NVME_TARGET="${NVME_TARGET},${nvme_device}"
           NVME_TARGET_COUNT=$((NVME_TARGET_COUNT+1))
+        else
+          echo "WARNING: Skipping ${nvme_device} due to size mismatch"
         fi
       fi
   done
@@ -218,30 +251,48 @@ SSD_TARGET_COUNT=0
 HDD_TARGET_COUNT=0
 SSD_TARGET_FIRST=""
 HDD_TARGET_FIRST=""
+SSD_TARGET_SIZE=0
+HDD_TARGET_SIZE=0
 if [[ $SCSI_COUNT -ge 1 ]] ; then
   for scsi_device in "${SCSI_ARRAY[@]}"; do
     if [ "$(lsblk -d -o rota "/dev/${scsi_device}" | tail -n 1 | xargs)" -ne "1" ] ; then
       SSD_COUNT=$((SSD_COUNT+1))
+      ssd_size="$(get_device_size_bytes "$scsi_device")"
+      if [ "$ssd_size" == "" ] ; then
+        echo "WARNING: Unable to determine size for ${scsi_device}, skipping"
+        continue
+      fi
       if [ "${SSD_TARGET}" == "" ] ; then
         SSD_TARGET="${scsi_device}"
         SSD_TARGET_FIRST="${scsi_device}"
         SSD_TARGET_COUNT=1
+        SSD_TARGET_SIZE="${ssd_size}"
       else
-        if [[ $(grep "${SSD_TARGET_FIRST}" -m1 /proc/partitions | xargs | cut -d" " -f3) -eq $(grep "${scsi_device}" -m1 /proc/partitions | xargs | cut -d" " -f3) ]]; then
+        if [ "$ssd_size" -eq "$SSD_TARGET_SIZE" ] 2>/dev/null ; then
           SSD_TARGET="${SSD_TARGET},${scsi_device}"
           SSD_TARGET_COUNT=$((SSD_TARGET_COUNT+1))
+        else
+          echo "WARNING: Skipping ${scsi_device} due to size mismatch"
         fi
       fi
     else
       HDD_COUNT=$((HDD_COUNT+1))
+      hdd_size="$(get_device_size_bytes "$scsi_device")"
+      if [ "$hdd_size" == "" ] ; then
+        echo "WARNING: Unable to determine size for ${scsi_device}, skipping"
+        continue
+      fi
       if [ "${HDD_TARGET}" == "" ] ; then
         HDD_TARGET="${scsi_device}"
         HDD_TARGET_FIRST="${scsi_device}"
         HDD_TARGET_COUNT=1
+        HDD_TARGET_SIZE="${hdd_size}"
       else
-        if [[ $(grep "${HDD_TARGET_FIRST}" -m1 /proc/partitions | xargs | cut -d" " -f3) -eq $(grep "${scsi_device}" -m1 /proc/partitions | xargs | cut -d" " -f3) ]]; then
+        if [ "$hdd_size" -eq "$HDD_TARGET_SIZE" ] 2>/dev/null ; then
           HDD_TARGET="${HDD_TARGET},${scsi_device}"
           HDD_TARGET_COUNT=$((HDD_TARGET_COUNT+1))
+        else
+          echo "WARNING: Skipping ${scsi_device} due to size mismatch"
         fi
       fi
     fi
@@ -337,7 +388,12 @@ fi
 
 # check for ram size
 #MEMORY_SIZE_GB=$(( $(vmstat -s | grep -i "total memory" | xargs | cut -d" " -f 1) / 1024 / 1000))
-TARGET_SIZE_GB=$(( $(grep "${INSTALL_TARGET//,*}" -m1 /proc/partitions | xargs | cut -d" " -f3) / 1024 / 1024))
+TARGET_SIZE_BYTES="$(get_device_size_bytes "${INSTALL_TARGET//,*}")"
+if [ "$TARGET_SIZE_BYTES" == "" ] ; then
+  echo "ERROR: Unable to determine size for ${INSTALL_TARGET}"
+  exit 1
+fi
+TARGET_SIZE_GB=$(( TARGET_SIZE_BYTES / 1024 / 1024 / 1024 ))
 
 ##### CONFIGURE BOOT PARTITION SIZE
 if [ "$MY_BOOT" != "" ] ; then
@@ -487,15 +543,27 @@ else
 fi
 
 if [ "$OS" == "PBS" ] ; then
-  if [ ! -f postinstall_file="/root/pbs" ] ; then
-    wget "https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/pbs" -c -O /root/pbs
-  fi
   postinstall_file="/root/pbs"
+  postinstall_url="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/pbs"
 else
-  if [ ! -f postinstall_file="/root/pve" ] ; then
-    wget "https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/pve" -c -O /root/pve
-  fi
   postinstall_file="/root/pve"
+  postinstall_url="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/pve"
+fi
+
+if [ ! -f "$postinstall_file" ] ; then
+  wget "$postinstall_url" -c -O "$postinstall_file"
+fi
+
+if [ "$MY_POSTINSTALL_SHA256" != "" ] ; then
+  if ! echo "${MY_POSTINSTALL_SHA256}  ${postinstall_file}" | sha256sum -c - ; then
+    echo "ERROR: post-install script checksum verification failed"
+    exit 1
+  fi
+elif [ "${MY_POSTINSTALL_ALLOW_UNVERIFIED,,}" != "yes" ] && [ "${MY_POSTINSTALL_ALLOW_UNVERIFIED,,}" != "true" ] ; then
+  echo "ERROR: MY_POSTINSTALL_SHA256 not set; refusing to run unverified post-install script"
+  exit 1
+else
+  echo "WARNING: Running post-install script without checksum verification"
 fi
 
 if [ ! -f "$postinstall_file" ] ; then
@@ -503,15 +571,16 @@ if [ ! -f "$postinstall_file" ] ; then
   exit 1
 fi
 cp -f "$postinstall_file" /post-install-proxmox
-chmod 777 /post-install-proxmox
+chmod 755 /post-install-proxmox
 
 
 if [ "${WIPE_PARTITION_TABLE,,}" == "yes" ] || [ "${WIPE_PARTITION_TABLE,,}" == "true" ] ; then
   IFS=', ' read -r -a INSTALL_TARGET_ARRAY <<< "${INSTALL_TARGET}"
   for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
     echo "Creating NEW GPT table: ${install_device}"
-    printf "Yes\n" | parted "/dev/${install_device}" mklabel gpt ---pretend-input-tty || exit 1
-    sleep 5
+    parted -s "/dev/${install_device}" mklabel gpt || exit 1
+    partprobe "/dev/${install_device}" 2>/dev/null || true
+    sleep 2
   done
 fi
 

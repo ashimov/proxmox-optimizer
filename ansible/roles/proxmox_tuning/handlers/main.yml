@@ -1,0 +1,36 @@
+- name: Reload sysctl
+  ansible.builtin.command: sysctl --system
+  register: sysctl_reload
+  changed_when: false
+  failed_when: sysctl_reload.rc != 0 and not (sysctl_reload.stderr | default('') is search('No such file or directory'))
+
+- name: Restart journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
+
+- name: Restart logrotate
+  ansible.builtin.systemd:
+    name: logrotate
+    state: restarted
+
+- name: Restart haveged
+  ansible.builtin.systemd:
+    name: haveged
+    state: restarted
+
+- name: Update grub
+  ansible.builtin.command: update-grub
+
+- name: Refresh EFI boot
+  ansible.builtin.command: pve-efiboot-tool refresh
+
+- name: Restart ksmtuned
+  ansible.builtin.systemd:
+    name: ksmtuned
+    state: restarted
+    enabled: true
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

@@ -55,18 +55,42 @@ if [ "$LVM_MOUNT_POINT" == "" ]; then
   LVM_MOUNT_POINT="/var/lib/vz"
 fi
 
-echo "+++++++++++++++++++++++++"
-echo "WILL DESTROY ALL DATA ON"
-echo "$LVM_MOUNT_POINT"
-echo "+++++++++++++++++++++++++"
-echo "[CTRL]+[C] to exit"
-echo "+++++++++++++++++++++++++"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "  WARNING: THIS OPERATION WILL DESTROY ALL DATA"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo ""
+echo "  Target: $LVM_MOUNT_POINT"
+echo ""
+echo "  This script will:"
+echo "    - Unmount the LVM volume"
+echo "    - Destroy the LVM logical volume"
+echo "    - Stop and remove the MD RAID array"
+echo "    - Create a new ZFS pool on the underlying devices"
+echo ""
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo ""
+
+# Require explicit confirmation
+if [ "${LVM2ZFS_CONFIRM:-}" != "yes" ]; then
+  echo "ERROR: This is a destructive operation."
+  echo ""
+  echo "To confirm you understand the risks, run:"
+  echo "  LVM2ZFS_CONFIRM=yes $0 $LVM_MOUNT_POINT"
+  echo ""
+  echo "Or set LVM2ZFS_CONFIRM=yes as an environment variable."
+  exit 1
+fi
+
+echo "Confirmation received. Starting in 5 seconds..."
+echo "[CTRL]+[C] to abort"
+echo ""
 sleep 1
 echo "5.." ; sleep 1
 echo "4.." ; sleep 1
 echo "3.." ; sleep 1
 echo "2.." ; sleep 1
 echo "1.." ; sleep 1
+echo ""
 echo "STARTING CONVERSION"
 sleep 1
 

@@ -1,0 +1,273 @@
+---
+# Hetzner Provider Role
+# Note: installimage workflows require rescue mode and cannot be automated via Ansible
+# This role handles post-installation Hetzner-specific configurations
+
+# Auto-detect Hetzner server by checking ASN
+- name: Get public IP address
+  ansible.builtin.uri:
+    url: https://ipinfo.io/ip
+    return_content: yes
+    timeout: 10
+  register: public_ip_result
+  failed_when: false
+  when: xs_hetzner_detect | default(true)
+
+- name: Validate Hetzner public IP
+  ansible.builtin.set_fact:
+    hetzner_public_ip: "{{ public_ip_result.content | trim }}"
+    hetzner_public_ip_valid: "{{ (public_ip_result.content | trim | ansible.utils.ipaddr('address')) is not false }}"
+  when: xs_hetzner_detect | default(true) and public_ip_result.status | default(0) == 200
+
+- name: Install whois for ASN lookup
+  ansible.builtin.apt:
+    name: whois
+    state: present
+  when:
+    - xs_hetzner_detect | default(true)
+    - public_ip_result.status | default(0) == 200
+    - hetzner_public_ip_valid | default(false)
+
+- name: Check Hetzner ASN lookup
+  ansible.builtin.command:
+    argv:
+      - whois
+      - -h
+      - v4.whois.cymru.com
+      - -t
+      - "{{ hetzner_public_ip }}"
+  register: hetzner_asn_check
+  changed_when: false
+  failed_when: false
+  when:
+    - xs_hetzner_detect | default(true)
+    - public_ip_result.status | default(0) == 200
+    - hetzner_public_ip_valid | default(false)
+
+- name: Set Hetzner detection fact
+  ansible.builtin.set_fact:
+    is_hetzner_server: "{{ 'hetzner' in (hetzner_asn_check.stdout | default('') | lower) }}"
+  when:
+    - xs_hetzner_detect | default(true)
+    - hetzner_public_ip_valid | default(false)
+
+- name: Skip Hetzner detection on invalid public IP
+  ansible.builtin.set_fact:
+    is_hetzner_server: false
+  when:
+    - xs_hetzner_detect | default(true)
+    - public_ip_result.status | default(0) == 200
+    - not (hetzner_public_ip_valid | default(false))
+
+- name: Display Hetzner detection result
+  ansible.builtin.debug:
+    msg: "Hetzner server detected: {{ is_hetzner_server | default(false) }}"
+  when: xs_hetzner_detect | default(true)
+
+# Hetzner-specific network configuration
+- name: Configure Hetzner network settings
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-hetzner-network.conf
+    state: present
+    sysctl_set: true
+  loop:
+    - name: net.ipv4.conf.default.rp_filter
+      value: "1"
+    - name: net.ipv4.conf.all.rp_filter
+      value: "1"
+    - name: net.ipv4.icmp_echo_ignore_broadcasts
+      value: "1"
+    - name: net.ipv4.conf.all.accept_redirects
+      value: "0"
+    - name: net.ipv6.conf.all.accept_redirects
+      value: "0"
+    - name: net.ipv4.conf.all.send_redirects
+      value: "0"
+    - name: net.ipv4.conf.all.accept_source_route
+      value: "0"
+    - name: net.ipv6.conf.all.accept_source_route
+      value: "0"
+  when:
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_network_tuning | default(true)
+    - ansible_virtualization_type | default('') != 'lxc'
+
+# Hetzner Robot API integration (optional)
+- name: Check for Hetzner Robot credentials
+  ansible.builtin.stat:
+    path: /root/.hetzner-robot
+  register: hetzner_robot_creds
+  when: xs_hetzner_robot | default(false)
+
+- name: Display Hetzner Robot status
+  ansible.builtin.debug:
+    msg: "Hetzner Robot credentials found: {{ hetzner_robot_creds.stat.exists | default(false) }}"
+  when: xs_hetzner_robot | default(false)
+
+- name: Set Hetzner Robot credentials defaults
+  ansible.builtin.set_fact:
+    hetzner_robot_user_effective: "{{ xs_hetzner_robot_user | default('') }}"
+    hetzner_robot_pass_effective: "{{ xs_hetzner_robot_pass | default('') }}"
+  when: xs_hetzner_robot | default(false)
+
+- name: Load Hetzner Robot credentials from file
+  ansible.builtin.slurp:
+    path: /root/.hetzner-robot
+  register: hetzner_robot_creds_raw
+  when:
+    - xs_hetzner_robot | default(false)
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - hetzner_robot_creds.stat.exists | default(false)
+    - hetzner_robot_user_effective | length == 0 or hetzner_robot_pass_effective | length == 0
+
+- name: Parse Hetzner Robot credentials
+  ansible.builtin.set_fact:
+    hetzner_robot_user_effective: "{{ (hetzner_robot_creds_raw.content | b64decode | regex_search('user=([^\\n]+)', '\\1')) | default(hetzner_robot_user_effective) }}"
+    hetzner_robot_pass_effective: "{{ (hetzner_robot_creds_raw.content | b64decode | regex_search('(password|pass)=([^\\n]+)', '\\2')) | default(hetzner_robot_pass_effective) }}"
+  no_log: true
+  when:
+    - xs_hetzner_robot | default(false)
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - hetzner_robot_creds_raw is defined
+
+- name: Ensure Hetzner Robot credentials are set
+  ansible.builtin.assert:
+    that:
+      - hetzner_robot_user_effective | length > 0
+      - hetzner_robot_pass_effective | length > 0
+    fail_msg: "Set xs_hetzner_robot_user/xs_hetzner_robot_pass or provide /root/.hetzner-robot"
+  when:
+    - xs_hetzner_robot | default(false)
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+
+- name: Fetch Hetzner Robot server list
+  ansible.builtin.uri:
+    url: "{{ xs_hetzner_robot_endpoint }}/server"
+    method: GET
+    user: "{{ hetzner_robot_user_effective }}"
+    password: "{{ hetzner_robot_pass_effective }}"
+    force_basic_auth: true
+    return_content: true
+  register: hetzner_robot_servers
+  no_log: true
+  when:
+    - xs_hetzner_robot | default(false)
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+
+- name: Save Hetzner Robot server list
+  ansible.builtin.copy:
+    dest: "{{ xs_hetzner_robot_output }}"
+    content: "{{ hetzner_robot_servers.content | default('') }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - xs_hetzner_robot | default(false)
+    - hetzner_robot_servers is defined
+
+- name: Configure Hetzner Robot RDNS entries
+  ansible.builtin.uri:
+    url: "{{ xs_hetzner_robot_endpoint }}/rdns"
+    method: POST
+    user: "{{ hetzner_robot_user_effective }}"
+    password: "{{ hetzner_robot_pass_effective }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      ip: "{{ item.ip }}"
+      ptr: "{{ item.ptr }}"
+    status_code:
+      - 200
+      - 201
+  loop: "{{ xs_hetzner_robot_rdns | default([]) }}"
+  no_log: true
+  when:
+    - xs_hetzner_robot | default(false)
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_robot_rdns | default([]) | length > 0
+
+# Hetzner Storage Box mount (optional)
+- name: Install cifs-utils for Storage Box
+  ansible.builtin.apt:
+    name: cifs-utils
+    state: present
+  when:
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_storagebox | default(false)
+
+- name: Create Storage Box mount point
+  ansible.builtin.file:
+    path: "{{ xs_hetzner_storagebox_mount | default('/mnt/storagebox') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_storagebox | default(false)
+
+- name: Ensure Storage Box credentials are set
+  ansible.builtin.assert:
+    that:
+      - xs_hetzner_storagebox_user | length > 0
+      - xs_hetzner_storagebox_pass | length > 0
+      - xs_hetzner_storagebox_host | length > 0
+      - xs_hetzner_storagebox_share | length > 0
+    fail_msg: "Set xs_hetzner_storagebox_user/pass/host/share to mount the Storage Box"
+  when:
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_storagebox | default(false)
+
+- name: Create Storage Box credentials file
+  ansible.builtin.copy:
+    dest: "{{ xs_hetzner_storagebox_credentials_file }}"
+    content: |
+      username={{ xs_hetzner_storagebox_user }}
+      password={{ xs_hetzner_storagebox_pass }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when:
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_storagebox | default(false)
+
+- name: Mount Storage Box
+  ansible.builtin.mount:
+    path: "{{ xs_hetzner_storagebox_mount }}"
+    src: "//{{ xs_hetzner_storagebox_host }}/{{ xs_hetzner_storagebox_share }}"
+    fstype: cifs
+    opts: "credentials={{ xs_hetzner_storagebox_credentials_file }},iocharset=utf8,vers=3.0,uid=0,gid=0,file_mode=0600,dir_mode=0700"
+    state: mounted
+  when:
+    - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+    - xs_hetzner_storagebox | default(false)
+
+# Documentation notice for installimage
+- name: Display installimage notice
+  ansible.builtin.debug:
+    msg: |
+      NOTE: Hetzner installimage workflows cannot be automated via Ansible.
+      For fresh installations, use the rescue system with:
+        - hetzner/installimage-proxmox.sh hostname.fqdn.com [pve8|pve9|pbs]
+      
+      This role handles post-installation configurations only.
+  when: is_hetzner_server | default(false) or xs_hetzner_force | default(false)
+
+# Skip notice for non-Hetzner servers
+- name: Skip Hetzner configuration - not a Hetzner server
+  ansible.builtin.debug:
+    msg: "Skipping Hetzner configuration - server is not on Hetzner network. Set xs_hetzner_force=true to force."
+  when:
+    - not (is_hetzner_server | default(false))
+    - not (xs_hetzner_force | default(false))
+
+- name: Remove Hetzner network tuning when disabled
+  ansible.builtin.file:
+    path: /etc/sysctl.d/99-hetzner-network.conf
+    state: absent
+  when:
+    - not (is_hetzner_server | default(false) or xs_hetzner_force | default(false))
+      or not (xs_hetzner_network_tuning | default(true))

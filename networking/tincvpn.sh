@@ -65,7 +65,6 @@ if [ "$reset" == "yes" ] || [ "$uninstall" == "yes" ] ; then
   pkill -9 tincd
 
   echo "Removing configs"
-  rm -rf /etc/tinc/my_default_v4ip
   rm -rf /etc/tinc/xsvpn
   mv -f /etc/tinc/nets.boot.orig /etc/tinc/nets.boot
   rm -f /etc/network/interfaces.d/tinc-vpn.cfg

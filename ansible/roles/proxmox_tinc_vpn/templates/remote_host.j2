@@ -1,0 +1,5 @@
+Address = {{ item.address }}
+Subnet = {{ item.subnet }}
+Port = {{ item.port | default(655) }}
+Compression = {{ item.compression | default(10) }}
+{{ item.public_key }}

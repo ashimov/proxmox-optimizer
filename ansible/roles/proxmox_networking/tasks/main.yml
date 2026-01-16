@@ -1,0 +1,76 @@
+- name: Validate networking variables
+  ansible.builtin.assert:
+    that:
+      - proxmox_primary_interface | length > 0
+      - proxmox_bridge_address | ansible.utils.ipaddr('address')
+      - proxmox_bridge_netmask | ansible.utils.ipaddr('netmask')
+      - proxmox_bridge_gateway | ansible.utils.ipaddr('address')
+      - proxmox_ipv6_address | length == 0 or proxmox_ipv6_address | ansible.utils.ipaddr('address')
+      - proxmox_ipv6_gateway | length == 0 or proxmox_ipv6_gateway | ansible.utils.ipaddr('address')
+    fail_msg: "Missing or invalid networking variables"
+
+- name: Configure networking sysctl
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-networking.conf
+    state: present
+    sysctl_set: true
+  loop:
+    - name: net.ipv4.ip_forward
+      value: "1"
+    - name: net.ipv4.conf.all.send_redirects
+      value: "0"
+    - name: net.ipv4.conf.default.send_redirects
+      value: "0"
+    - name: net.ipv6.conf.all.forwarding
+      value: "1"
+  when: ansible_virtualization_type | default('') != 'lxc'
+
+- name: Render /etc/network/interfaces
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: /etc/network/interfaces
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+
+- name: Validate extra routes
+  ansible.builtin.assert:
+    that:
+      - item.cidr is defined
+      - item.cidr | ansible.utils.ipaddr('net')
+      - item.interface is not defined or item.interface | length > 0
+    fail_msg: "Each proxmox_extra_routes entry must include a valid cidr and optional interface"
+  loop: "{{ proxmox_extra_routes }}"
+  when: proxmox_extra_routes | length > 0
+
+- name: Configure extra routes script
+  ansible.builtin.copy:
+    dest: /etc/network/if-up.d/ansible-extra-routes
+    content: |
+      #!/usr/bin/env bash
+      # Managed by Ansible: extra routes
+      set -e
+      {% for route in proxmox_extra_routes %}
+      ip route replace {{ route.cidr | ansible.utils.ipaddr('network') }}/{{ route.cidr | ansible.utils.ipaddr('prefix') }} dev {{ route.interface | default(proxmox_bridge_name) }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0755"
+  when: proxmox_extra_routes | length > 0
+
+- name: Remove extra routes script when not configured
+  ansible.builtin.file:
+    path: /etc/network/if-up.d/ansible-extra-routes
+    state: absent
+  when: proxmox_extra_routes | length == 0
+
+- name: Apply extra routes immediately
+  ansible.builtin.command: ip route replace {{ item.cidr | ansible.utils.ipaddr('network') }}/{{ item.cidr | ansible.utils.ipaddr('prefix') }} dev {{ item.interface | default(proxmox_bridge_name) }}
+  loop: "{{ proxmox_extra_routes }}"
+  changed_when: false
+  when:
+    - proxmox_extra_routes | length > 0
+    - not ansible_check_mode

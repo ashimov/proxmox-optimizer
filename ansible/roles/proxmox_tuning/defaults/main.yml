@@ -1,0 +1,63 @@
+---
+# Defaults for proxmox_tuning role
+# These can be overridden in inventory/group_vars/all.yml or host_vars
+
+# AMD CPU fixes (EPYC/Ryzen)
+xs_amdfixes: "yes"
+
+# KSM memory tuning
+xs_ksmtuned: "yes"
+
+# Kernel panic auto-reboot
+xs_kernelpanic: "yes"
+
+# System limits (ulimits, inotify, etc.)
+xs_limits: "yes"
+
+# Logrotate optimization
+xs_logrotate: "yes"
+
+# Journald optimization
+xs_journald: "yes"
+
+# Entropy pool management (haveged)
+xs_entropy: "yes"
+
+# Vzdump backup optimization
+xs_vzdump: "yes"
+
+# Memory optimizations
+xs_memoryfixes: "yes"
+
+# TCP BBR congestion control
+xs_tcpbbr: "yes"
+
+# TCP FastOpen
+xs_tcpfastopen: "yes"
+
+# Network sysctl optimizations
+xs_net: "yes"
+
+# Swappiness fix
+xs_swappiness: "yes"
+
+# Max filesystem limits
+xs_maxfs: "yes"
+
+# Remove subscription banner
+xs_nosubbanner: "yes"
+
+# Pigz parallel compression
+xs_pigz: "yes"
+
+# Bash customization
+xs_bashrc: "yes"
+
+# MOTD banner
+xs_motd: "yes"
+
+# Time synchronization
+xs_timesync: "yes"
+
+# Timezone (empty = auto-detect by IP)
+xs_timezone: ""

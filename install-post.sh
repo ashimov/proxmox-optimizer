@@ -39,6 +39,9 @@
 ###############################
 #####  D O   N O T   E D I T   B E L O W  ######
 
+set -e
+set -o pipefail
+
 #### VARIABLES / options
 # Detect AMD EPYC and Ryzen CPU and Apply Fixes
 if [ -z "$XS_AMDFIXES" ] ; then
@@ -132,6 +135,10 @@ fi
 if [ -z "$XS_NOAPTLANG" ] ; then
     XS_NOAPTLANG="yes"
 fi
+# Manage /etc/apt/sources.list for clean installs
+if [ -z "$XS_MANAGE_SOURCES_LIST" ] ; then
+    XS_MANAGE_SOURCES_LIST="yes"
+fi
 # Disable enterprise proxmox repo
 if [ -z "$XS_NOENTREPO" ] ; then
     XS_NOENTREPO="yes"
@@ -147,6 +154,14 @@ fi
 # Detect if this is an OVH server and install OVH Real Time Monitoring
 if [ -z "$XS_OVHRTM" ] ; then
     XS_OVHRTM="yes"
+fi
+# Allow running unverified OVH RTM script (not recommended)
+if [ -z "$XS_OVHRTM_ALLOW_UNVERIFIED" ] ; then
+    XS_OVHRTM_ALLOW_UNVERIFIED="no"
+fi
+# Optional SHA256 checksum for OVH RTM installer script
+if [ -z "$XS_OVHRTM_SHA256" ] ; then
+    XS_OVHRTM_SHA256=""
 fi
 # Set pigz to replace gzip, 2x faster gzip compression
 if [ -z "$XS_PIGZ" ] ; then
@@ -180,6 +195,26 @@ fi
 if [ -z "$XS_UTILS" ] ; then
     XS_UTILS="yes"
 fi
+# Log file path (empty to disable)
+if [ -z "$XS_LOG_FILE" ] ; then
+    XS_LOG_FILE="/var/log/ashimov-install-post.log"
+fi
+# Override URLs (optional)
+if [ -z "$XS_IPINFO_URL" ] ; then
+    XS_IPINFO_URL="https://ipinfo.io/ip"
+fi
+if [ -z "$XS_IPAPI_URL" ] ; then
+    XS_IPAPI_URL="https://ipapi.co"
+fi
+if [ -z "$XS_OVHRTM_URL" ] ; then
+    XS_OVHRTM_URL="https://last-public-ovh-infra-yak.snap.mirrors.ovh.net/yak/archives/apply.sh"
+fi
+if [ -z "$XS_CISOFY_KEY_URL" ] ; then
+    XS_CISOFY_KEY_URL="https://packages.cisofy.com/keys/cisofy-software-public.key"
+fi
+if [ -z "$XS_PROXMOX_KEY_URL" ] ; then
+    XS_PROXMOX_KEY_URL=""
+fi
 # Increase vzdump backup speed
 if [ -z "$XS_VZDUMP" ] ; then
     XS_VZDUMP="yes"
@@ -200,11 +235,18 @@ fi
 
 echo "Processing .... "
 
-# VARIABLES are overrideen with install-post.env
+# VARIABLES are overridden with install-post.env
 if [ -f "install-post.env" ] ; then
-    echo "Loading variables from install-post.env ..."
-    # shellcheck disable=SC1091
-    source install-post.env;
+    # Security: only source if owned by root and not world-writable
+    env_perms=$(stat -c %a "install-post.env" 2>/dev/null || echo "777")
+    env_owner=$(stat -c %u "install-post.env" 2>/dev/null || echo "9999")
+    if [ "$env_owner" == "0" ] && [ "${env_perms: -1}" -le 4 ]; then
+        echo "Loading variables from install-post.env ..."
+        # shellcheck disable=SC1091
+        source install-post.env
+    else
+        echo "WARNING: install-post.env has insecure ownership/permissions (owner=$env_owner, mode=$env_perms), skipping"
+    fi
 fi
 
 # Set the local
@@ -213,6 +255,54 @@ if [ "$XS_LANG" == "" ] ; then
 fi
 export LANG="$XS_LANG"
 export LC_ALL="C"
+
+set -u
+IFS=$'\n\t'
+cleanup() {
+    # Cleanup temporary files on error
+    rm -f /tmp/ashimov-install-post.* 2>/dev/null || true
+}
+trap 'cleanup; echo "ERROR: install-post.sh failed at line $LINENO" >&2' ERR EXIT
+
+## Helper functions for idempotent operations
+
+# Append a line to file only if it doesn't already exist
+# Usage: append_if_not_exists "/path/to/file" "line content"
+append_if_not_exists() {
+    local file="$1"
+    local content="$2"
+    if ! grep -qF "$content" "$file" 2>/dev/null; then
+        echo "$content" >> "$file"
+    fi
+}
+
+# Append a block to file only if marker line doesn't exist
+# Usage: append_block_if_not_exists "/path/to/file" "marker line" "full content"
+append_block_if_not_exists() {
+    local file="$1"
+    local marker="$2"
+    local content="$3"
+    if ! grep -qF "$marker" "$file" 2>/dev/null; then
+        echo "$content" >> "$file"
+    fi
+}
+
+# Create sysctl.d config file with standard header
+# Usage: create_sysctl_conf "name" "content"
+create_sysctl_conf() {
+    local name="$1"
+    local content="$2"
+    cat > "/etc/sysctl.d/99-xs-${name}.conf" <<EOF
+# ashimov.com
+$content
+EOF
+}
+
+if [ -n "$XS_LOG_FILE" ] ; then
+    mkdir -p "$(dirname "$XS_LOG_FILE")"
+    touch "$XS_LOG_FILE"
+    exec > >(tee -a "$XS_LOG_FILE") 2>&1
+fi
 
 # enforce proxmox
 if [ ! -f "/etc/pve/.version" ] ; then
@@ -227,7 +317,18 @@ fi
 
 # SET VARIBLES
 
-OS_CODENAME="$(grep "VERSION_CODENAME=" /etc/os-release | cut -d"=" -f 2 | xargs )"
+if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    OS_CODENAME="${VERSION_CODENAME:-}"
+else
+    echo "ERROR: /etc/os-release not found"
+    exit 1
+fi
+if [ "$OS_CODENAME" == "" ] ; then
+    echo "ERROR: VERSION_CODENAME not found in /etc/os-release"
+    exit 1
+fi
 RAM_SIZE_GB=$(( $(vmstat -s | grep -i "total memory" | xargs | cut -d" " -f 1) / 1024 / 1000))
 
 if [ "${XS_LANG}" == "en_US.UTF-8" ] && [ "${XS_NOAPTLANG,,}" == "yes" ] ; then
@@ -242,33 +343,54 @@ fi
 
 if [ "${XS_NOENTREPO,,}" == "yes" ] ; then
     # disable enterprise proxmox repo
+    PROXMOX_KEY_URL="$XS_PROXMOX_KEY_URL"
+    if [ "$PROXMOX_KEY_URL" == "" ] ; then
+      PROXMOX_KEY_URL="https://enterprise.proxmox.com/debian/proxmox-release-${OS_CODENAME}.gpg"
+    fi
     if [ -f /etc/apt/sources.list.d/pve-enterprise.list ]; then
       sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/pve-enterprise.list
     fi
+    PROXMOX_KEYRING="/etc/apt/keyrings/proxmox-release-${OS_CODENAME}.gpg"
+    PROXMOX_TRUSTED_KEY="/etc/apt/trusted.gpg.d/proxmox-release-${OS_CODENAME}.gpg"
+    if [ ! -f "$PROXMOX_KEYRING" ] && [ -f "$PROXMOX_TRUSTED_KEY" ] ; then
+      PROXMOX_KEYRING="$PROXMOX_TRUSTED_KEY"
+    fi
+    if [ ! -f "$PROXMOX_KEYRING" ] ; then
+      mkdir -p /etc/apt/keyrings
+      if ! wget -q --timeout=10 --tries=3 "$PROXMOX_KEY_URL" -O "$PROXMOX_KEYRING"; then
+        echo "ERROR: Failed to download Proxmox key from ${PROXMOX_KEY_URL}"
+        exit 1
+      fi
+    fi
     # enable free public proxmox repo
     if [ ! -f /etc/apt/sources.list.d/proxmox.list ] && [ ! -f /etc/apt/sources.list.d/pve-public-repo.list ] && [ ! -f /etc/apt/sources.list.d/pve-install-repo.list ] && [ ! -f /etc/apt/sources.list.d/pve-no-subscription.list ] ; then
-      echo -e "deb https://download.proxmox.com/debian/pve ${OS_CODENAME} pve-no-subscription\\n" > /etc/apt/sources.list.d/pve-public-repo.list
+      echo -e "deb [signed-by=${PROXMOX_KEYRING}] https://download.proxmox.com/debian/pve ${OS_CODENAME} pve-no-subscription\\n" > /etc/apt/sources.list.d/pve-public-repo.list
     fi
     if [ "${XS_TESTREPO,,}" == "yes" ] ; then
         # enable testing proxmox repo
-        echo -e "deb https://download.proxmox.com/debian/pve ${OS_CODENAME} pvetest\\n" > /etc/apt/sources.list.d/pve-testing-repo.list
+        echo -e "deb [signed-by=${PROXMOX_KEYRING}] https://download.proxmox.com/debian/pve ${OS_CODENAME} pvetest\\n" > /etc/apt/sources.list.d/pve-testing-repo.list
     fi
 fi
 
 # rebuild and add non-free to /etc/apt/sources.list
 # Debian 12+ uses non-free-firmware component and different security path
-if [ "$OS_CODENAME" == "bookworm" ] || [ "$OS_CODENAME" == "trixie" ]; then
-cat <<EOF > /etc/apt/sources.list
+if [ "${XS_MANAGE_SOURCES_LIST,,}" == "yes" ] ; then
+  if [ -f /etc/apt/sources.list ]; then
+    cp /etc/apt/sources.list "/etc/apt/sources.list.bak.$(date +%Y%m%d%H%M%S)"
+  fi
+  if [ "$OS_CODENAME" == "bookworm" ] || [ "$OS_CODENAME" == "trixie" ]; then
+  cat <<EOF > /etc/apt/sources.list
 deb https://deb.debian.org/debian ${OS_CODENAME} main contrib non-free non-free-firmware
 deb https://deb.debian.org/debian ${OS_CODENAME}-updates main contrib non-free non-free-firmware
 deb https://security.debian.org/debian-security ${OS_CODENAME}-security main contrib non-free non-free-firmware
 EOF
-else
-cat <<EOF > /etc/apt/sources.list
+  else
+  cat <<EOF > /etc/apt/sources.list
 deb https://deb.debian.org/debian ${OS_CODENAME} main contrib non-free
 deb https://deb.debian.org/debian ${OS_CODENAME}-updates main contrib non-free
 deb https://security.debian.org/debian-security ${OS_CODENAME}-security main contrib non-free
 EOF
+  fi
 fi
 
 # Refresh the package lists
@@ -345,7 +467,10 @@ if [ "${XS_LYNIS,,}" == "yes" ] ; then
     # Lynis security scan tool by Cisofy
     # Use modern keyring method instead of deprecated apt-key
     mkdir -p /etc/apt/keyrings
-    wget -q -O /etc/apt/keyrings/cisofy-software.asc https://packages.cisofy.com/keys/cisofy-software-public.key
+    if ! wget -q --timeout=10 --tries=3 -O /etc/apt/keyrings/cisofy-software.asc "$XS_CISOFY_KEY_URL"; then
+      echo "ERROR: Failed to download Cisofy key from ${XS_CISOFY_KEY_URL}"
+      exit 1
+    fi
     ## Add the latest lynis
     echo "deb [signed-by=/etc/apt/keyrings/cisofy-software.asc] https://packages.cisofy.com/community/lynis/deb/ stable main" > /etc/apt/sources.list.d/cisofy-lynis.list
     ## Refresh the package lists
@@ -394,19 +519,19 @@ fi
 if [ "${XS_KSMTUNED,,}" == "yes" ] ; then
     ## Ensure ksmtuned (ksm-control-daemon) is enabled and optimise according to ram size
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install ksm-control-daemon
-    if [[ RAM_SIZE_GB -le 16 ]] ; then
+    if [[ $RAM_SIZE_GB -le 16 ]] ; then
         # start at 50% full
         KSM_THRES_COEF=50
         KSM_SLEEP_MSEC=80
-    elif [[ RAM_SIZE_GB -le 32 ]] ; then
+    elif [[ $RAM_SIZE_GB -le 32 ]] ; then
         # start at 60% full
         KSM_THRES_COEF=40
         KSM_SLEEP_MSEC=60
-    elif [[ RAM_SIZE_GB -le 64 ]] ; then
+    elif [[ $RAM_SIZE_GB -le 64 ]] ; then
         # start at 70% full
         KSM_THRES_COEF=30
         KSM_SLEEP_MSEC=40
-    elif [[ RAM_SIZE_GB -le 128 ]] ; then
+    elif [[ $RAM_SIZE_GB -le 128 ]] ; then
         # start at 80% full
         KSM_THRES_COEF=20
         KSM_SLEEP_MSEC=20
@@ -422,9 +547,9 @@ fi
 
 if [ "${XS_AMDFIXES,,}" == "yes" ] ; then
     ## Detect AMD EPYC and Ryzen CPU and Apply Fixes
-    if [ "$(grep -i -m 1 "model name" /proc/cpuinfo | grep -i "EPYC")" != "" ]; then
+    if grep -qi -m 1 "EPYC" /proc/cpuinfo; then
       echo "AMD EPYC detected"
-    elif [ "$(grep -i -m 1 "model name" /proc/cpuinfo | grep -i "Ryzen")" != "" ]; then
+    elif grep -qi -m 1 "Ryzen" /proc/cpuinfo; then
       echo "AMD Ryzen detected"
     else
         XS_AMDFIXES="no"
@@ -438,8 +563,8 @@ if [ "${XS_AMDFIXES,,}" == "yes" ] ; then
             update-grub
         fi
         ## Add msrs ignore to fix Windows guest on EPYC/Ryzen host
-        echo "options kvm ignore_msrs=Y" >> /etc/modprobe.d/kvm.conf
-        echo "options kvm report_ignored_msrs=N" >> /etc/modprobe.d/kvm.conf
+        append_if_not_exists "/etc/modprobe.d/kvm.conf" "options kvm ignore_msrs=Y"
+        append_if_not_exists "/etc/modprobe.d/kvm.conf" "options kvm report_ignored_msrs=N"
 
         # Install appropriate kernel based on Proxmox version
         PROXMOX_VERSION=$(pveversion | grep -oP 'pve-manager/\K[0-9]+' | head -1)
@@ -489,19 +614,56 @@ fi
 
 if [ "${XS_DISABLERPC,,}" == "yes" ] ; then
     ## Disable portmapper / rpcbind (security)
-    systemctl disable rpcbind
-    systemctl stop rpcbind
+    systemctl disable rpcbind || true
+    systemctl stop rpcbind || true
 fi
 
 if [ "${XS_TIMEZONE}" == "" ] ; then
     ## Set Timezone, empty = set automatically by ip
-    this_ip="$(dig +short myip.opendns.com @resolver1.opendns.com)"
-    timezone="$(curl "https://ipapi.co/${this_ip}/timezone")"
-    if [ "$timezone" != "" ] ; then
-        echo "Found $timezone for ${this_ip}"
-        timedatectl set-timezone "$timezone"
+    this_ip=""
+    if command -v dig >/dev/null 2>&1; then
+        this_ip="$(dig +short myip.opendns.com @resolver1.opendns.com | tail -n 1 || true)"
+    fi
+    if [ "$this_ip" == "" ] ; then
+        this_ip="$(curl -fsSL --max-time 10 --retry 3 --retry-delay 1 "$XS_IPINFO_URL" 2>/dev/null || true)"
+    fi
+    # Validate IP address format (IPv4 or IPv6)
+    is_valid_ip() {
+        local ip="$1"
+        # IPv4 validation
+        if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            local IFS='.'
+            # shellcheck disable=SC2206
+            local octets=($ip)
+            for octet in "${octets[@]}"; do
+                if [ "$octet" -gt 255 ]; then
+                    return 1
+                fi
+            done
+            return 0
+        fi
+        # IPv6 validation (simplified - accepts valid formats)
+        if [[ "$ip" =~ ^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$ ]] || \
+           [[ "$ip" =~ ^::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$ ]] || \
+           [[ "$ip" =~ ^([0-9a-fA-F]{1,4}:){1,6}:$ ]]; then
+            return 0
+        fi
+        return 1
+    }
+    if [ "$this_ip" != "" ] && is_valid_ip "$this_ip"; then
+        timezone="$(curl -fsSL --max-time 10 --retry 3 --retry-delay 1 "${XS_IPAPI_URL}/${this_ip}/timezone" 2>/dev/null || true)"
+        if [ "$timezone" != "" ] ; then
+            echo "Found $timezone for ${this_ip}"
+            timedatectl set-timezone "$timezone"
+        else
+            echo "WARNING: Timezone not found for ${this_ip}, set to UTC"
+            timedatectl set-timezone UTC
+        fi
+    elif [ "$this_ip" != "" ]; then
+        echo "WARNING: Invalid IP address format: ${this_ip}, set timezone to UTC"
+        timedatectl set-timezone UTC
     else
-        echo "WARNING: Timezone not found for ${this_ip}, set to UTC"
+        echo "WARNING: Unable to determine public IP, set timezone to UTC"
         timedatectl set-timezone UTC
     fi
 else
@@ -515,13 +677,21 @@ fi
 
 if [ "${XS_GUESTAGENT,,}" == "yes" ] ; then
     ## Detect if is running in a virtual machine and install the relavant guest agent
-    if [ "$(dmidecode -s system-manufacturer | xargs)" == "QEMU" ] || [ "$(systemd-detect-virt | xargs)" == "kvm" ] ; then
+    sys_vendor=""
+    if command -v dmidecode >/dev/null 2>&1; then
+      sys_vendor="$(dmidecode -s system-manufacturer 2>/dev/null | xargs || true)"
+    fi
+    virt_type=""
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+      virt_type="$(systemd-detect-virt 2>/dev/null | xargs || true)"
+    fi
+    if [ "$sys_vendor" == "QEMU" ] || [ "$virt_type" == "kvm" ] ; then
       echo "QEMU Detected, installing guest agent"
       /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install qemu-guest-agent
-    elif [ "$(systemd-detect-virt | xargs)" == "vmware" ] ; then
+    elif [ "$virt_type" == "vmware" ] ; then
       echo "VMware Detected, installing vm-tools"
       /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install open-vm-tools
-    elif [ "$(systemd-detect-virt | xargs)" == "oracle" ] ; then
+    elif [ "$virt_type" == "oracle" ] ; then
       echo "Virtualbox Detected, installing guest-utils"
       /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install virtualbox-guest-utils
     fi
@@ -546,12 +716,39 @@ fi
 
 if [ "${XS_OVHRTM,,}" == "yes" ] ; then
     ## Detect if this is an OVH server by getting the global IP and checking the ASN, then install OVH RTM (real time monitoring)"
-    ovh_ip="$(curl -s ipinfo.io/ip 2> /dev/null)"
-    if [ "$ovh_ip" != "" ] && [ "$(whois -h v4.whois.cymru.com -t "$ovh_ip" | tail -n 1 | cut -d'|' -f3 | grep -i "ovh")" != "" ] ; then
+    if ! command -v whois >/dev/null 2>&1; then
+      /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install whois
+    fi
+    ovh_ip="$(curl -fsSL --max-time 10 --retry 3 --retry-delay 1 "$XS_IPINFO_URL" 2> /dev/null || true)"
+    # Validate IP address format before passing to whois (prevent command injection)
+    if [[ "$ovh_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] && whois -h v4.whois.cymru.com -t "$ovh_ip" | tail -n 1 | cut -d'|' -f3 | grep -qi "ovh" ; then
       echo "Deteted OVH Server, installing OVH RTM (real time monitoring)"
       # http://help.ovh.co.uk/RealTimeMonitoring
       # https://docs.ovh.com/gb/en/dedicated/install-rtm/
-      wget -qO - https://last-public-ovh-infra-yak.snap.mirrors.ovh.net/yak/archives/apply.sh | OVH_PUPPET_MANIFEST=distribyak/catalog/master/puppet/manifests/common/rtmv2.pp bash
+      ovh_rtm_url="$XS_OVHRTM_URL"
+      ovh_rtm_script="$(mktemp -t ovh-rtm.XXXXXX)"
+      if curl -fsSL --max-time 20 --retry 3 --retry-delay 1 -o "$ovh_rtm_script" "$ovh_rtm_url"; then
+        if [ "$XS_OVHRTM_SHA256" != "" ] ; then
+          if ! echo "${XS_OVHRTM_SHA256}  ${ovh_rtm_script}" | sha256sum -c - ; then
+            echo "ERROR: OVH RTM checksum verification failed"
+            rm -f "$ovh_rtm_script"
+            exit 1
+          fi
+        elif [ "${XS_OVHRTM_ALLOW_UNVERIFIED,,}" != "yes" ] ; then
+          echo "WARNING: XS_OVHRTM_SHA256 not set; refusing to run unverified OVH RTM installer"
+          rm -f "$ovh_rtm_script"
+          ovh_rtm_script=""
+        else
+          echo "WARNING: Running OVH RTM installer without checksum verification"
+        fi
+        if [ "$ovh_rtm_script" != "" ] ; then
+          OVH_PUPPET_MANIFEST=distribyak/catalog/master/puppet/manifests/common/rtmv2.pp bash "$ovh_rtm_script"
+          rm -f "$ovh_rtm_script"
+        fi
+      else
+        echo "ERROR: Failed to download OVH RTM installer"
+        rm -f "$ovh_rtm_script"
+      fi
     fi
 fi
 
@@ -643,7 +840,8 @@ fs.inotify.max_user_instances=1048576
 fs.inotify.max_queued_events=1048576
 EOF
     ## Increase max FD limit / ulimit
-    cat <<EOF >> /etc/security/limits.d/99-xs-limits.conf
+    if ! grep -qF "ashimov.com" /etc/security/limits.d/99-xs-limits.conf 2>/dev/null; then
+        cat <<EOF >> /etc/security/limits.d/99-xs-limits.conf
 # ashimov.com
 # Increase max FD limit / ulimit
 * soft     nproc          1048576
@@ -655,6 +853,7 @@ root hard     nproc          unlimited
 root soft     nofile         unlimited
 root hard     nofile         unlimited
 EOF
+    fi
     ## Increase kernel max Key limit
     cat <<EOF > /etc/sysctl.d/99-xs-maxkeys.conf
 # ashimov.com
@@ -663,14 +862,14 @@ kernel.keys.root_maxkeys=1000000
 kernel.keys.maxkeys=1000000
 EOF
     ## Set systemd ulimits
-    echo "DefaultLimitNOFILE=256000" >> /etc/systemd/system.conf
-    echo "DefaultLimitNOFILE=256000" >> /etc/systemd/user.conf
+    append_if_not_exists "/etc/systemd/system.conf" "DefaultLimitNOFILE=256000"
+    append_if_not_exists "/etc/systemd/user.conf" "DefaultLimitNOFILE=256000"
 
-    echo 'session required pam_limits.so' >> /etc/pam.d/common-session
-    echo 'session required pam_limits.so' >> /etc/pam.d/runuser-l
+    append_if_not_exists "/etc/pam.d/common-session" "session required pam_limits.so"
+    append_if_not_exists "/etc/pam.d/runuser-l" "session required pam_limits.so"
 
     ## Set ulimit for the shell user
-    echo "ulimit -n 256000" >> /root/.profile
+    append_if_not_exists "/root/.profile" "ulimit -n 256000"
 fi
 
 if [ "${XS_LOGROTATE,,}" == "yes" ] ; then
@@ -851,26 +1050,32 @@ fi
 
 if [ "${XS_BASHRC,,}" == "yes" ] ; then
     ## Customise bashrc (thanks broeckca)
-    cat <<EOF >> /root/.bashrc
+    # Only add if marker not present (idempotent)
+    if ! grep -qF "# ashimov.com bashrc" /root/.bashrc 2>/dev/null; then
+        cat <<EOF >> /root/.bashrc
+# ashimov.com bashrc
 export HISTTIMEFORMAT="%d/%m/%y %T "
 export PS1='\u@\h:\W \$ '
 alias l='ls -CF'
 alias la='ls -A'
 alias ll='ls -alF'
 alias ls='ls --color=auto'
-source /etc/profile.d/bash_completion.sh
+[ -f /etc/profile.d/bash_completion.sh ] && source /etc/profile.d/bash_completion.sh
 export PS1="\[\e[31m\][\[\e[m\]\[\e[38;5;172m\]\u\[\e[m\]@\[\e[38;5;153m\]\h\[\e[m\] \[\e[38;5;214m\]\W\[\e[m\]\[\e[31m\]]\[\e[m\]\\$ "
 EOF
-    echo "source /root/.bashrc" >> /root/.bash_profile
+    fi
+    if ! grep -qF "source /root/.bashrc" /root/.bash_profile 2>/dev/null; then
+        echo "source /root/.bashrc" >> /root/.bash_profile
+    fi
 fi
 
 if [ "${XS_ZFSARC,,}" == "yes" ] ; then
     ## Optimise ZFS arc size accoring to memory size
     if [ "$(command -v zfs)" != "" ] ; then
-      if [[ RAM_SIZE_GB -le 16 ]] ; then
+      if [[ $RAM_SIZE_GB -le 16 ]] ; then
         MY_ZFS_ARC_MIN=536870911
         MY_ZFS_ARC_MAX=536870912
-    elif [[ RAM_SIZE_GB -le 32 ]] ; then
+    elif [[ $RAM_SIZE_GB -le 32 ]] ; then
         # 1GB/1GB
         MY_ZFS_ARC_MIN=1073741823
         MY_ZFS_ARC_MAX=1073741824
@@ -915,30 +1120,50 @@ fi
 if [ "${XS_VFIO_IOMMU,,}" == "yes" ] ; then
     # Enable IOMMU
     cpu=$(cat /proc/cpuinfo)
+    add_grub_cmdline_param() {
+        local param="$1"
+        if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+            if ! grep -qF "$param" /etc/default/grub; then
+                sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=\")([^\"]*)\"/\\1\\2 ${param}\"/" /etc/default/grub
+            fi
+        else
+            echo "GRUB_CMDLINE_LINUX_DEFAULT=\"${param}\"" >> /etc/default/grub
+        fi
+    }
     if [[ $cpu == *"GenuineIntel"* ]]; then
         echo "Detected Intel CPU"
-        sed -i 's/quiet/quiet intel_iommu=on iommu=pt/g' /etc/default/grub
+        add_grub_cmdline_param "intel_iommu=on"
+        add_grub_cmdline_param "iommu=pt"
     elif [[ $cpu == *"AuthenticAMD"* ]]; then
         echo "Detected AMD CPU"
-        sed -i 's/quiet/quiet amd_iommu=on iommu=pt/g' /etc/default/grub
+        add_grub_cmdline_param "amd_iommu=on"
+        add_grub_cmdline_param "iommu=pt"
     else
         echo "Unknown CPU"
     fi
 
     # Add VFIO modules
     # Note: vfio_virqfd merged into vfio module in kernel 6.2+ (Proxmox 8+)
-    KERNEL_MAJOR=$(uname -r | cut -d. -f1)
-    KERNEL_MINOR=$(uname -r | cut -d. -f2)
-    if [ "$KERNEL_MAJOR" -ge 6 ] && [ "$KERNEL_MINOR" -ge 2 ] 2>/dev/null; then
-        cat <<EOF >> /etc/modules
+    if ! grep -qF "# ashimov.com" /etc/modules 2>/dev/null || ! grep -qF "vfio" /etc/modules 2>/dev/null; then
+        KERNEL_MAJOR=$(uname -r | cut -d. -f1)
+        KERNEL_MINOR=$(uname -r | cut -d. -f2)
+        # Validate kernel version is numeric
+        if ! [[ "$KERNEL_MAJOR" =~ ^[0-9]+$ ]]; then
+            KERNEL_MAJOR=5
+        fi
+        if ! [[ "$KERNEL_MINOR" =~ ^[0-9]+$ ]]; then
+            KERNEL_MINOR=0
+        fi
+        if [ "$KERNEL_MAJOR" -gt 6 ] || { [ "$KERNEL_MAJOR" -eq 6 ] && [ "$KERNEL_MINOR" -ge 2 ]; }; then
+            cat <<EOF >> /etc/modules
 # ashimov.com
 vfio
 vfio_iommu_type1
 vfio_pci
 
 EOF
-    else
-        cat <<EOF >> /etc/modules
+        else
+            cat <<EOF >> /etc/modules
 # ashimov.com
 vfio
 vfio_iommu_type1
@@ -946,8 +1171,12 @@ vfio_pci
 vfio_virqfd
 
 EOF
+        fi
     fi
-    cat <<EOF >> /etc/modprobe.d/blacklist.conf
+
+    # Add GPU blacklist for VFIO passthrough
+    if ! grep -qF "# ashimov.com" /etc/modprobe.d/blacklist.conf 2>/dev/null || ! grep -qF "blacklist nouveau" /etc/modprobe.d/blacklist.conf 2>/dev/null; then
+        cat <<EOF >> /etc/modprobe.d/blacklist.conf
 # ashimov.com
 blacklist nouveau
 blacklist lbm-nouveau
@@ -958,6 +1187,7 @@ blacklist nvidia
 blacklist nvidiafb
 
 EOF
+    fi
 
 fi
 

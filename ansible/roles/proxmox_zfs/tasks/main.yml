@@ -1,0 +1,120 @@
+---
+- name: Set RAM size fact
+  ansible.builtin.set_fact:
+    proxmox_zfs_ram_size_gb: "{{ (ansible_memtotal_mb / 1024) | int }}"
+
+- name: Set ZFS ARC values for small memory
+  ansible.builtin.set_fact:
+    proxmox_zfs_arc_min_raw: 536870911
+    proxmox_zfs_arc_max_raw: 536870912
+  when: proxmox_zfs_ram_size_gb | int <= 16
+
+- name: Set ZFS ARC values for medium memory
+  ansible.builtin.set_fact:
+    proxmox_zfs_arc_min_raw: 1073741823
+    proxmox_zfs_arc_max_raw: 1073741824
+  when: proxmox_zfs_ram_size_gb | int > 16 and proxmox_zfs_ram_size_gb | int <= 32
+
+- name: Set ZFS ARC values for large memory
+  ansible.builtin.set_fact:
+    proxmox_zfs_arc_min_raw: "{{ (proxmox_zfs_ram_size_gb | int * 1073741824 / 16) | int }}"
+    proxmox_zfs_arc_max_raw: "{{ (proxmox_zfs_ram_size_gb | int * 1073741824 / 8) | int }}"
+  when: proxmox_zfs_ram_size_gb | int > 32
+
+- name: Enforce ZFS ARC minimums
+  ansible.builtin.set_fact:
+    proxmox_zfs_arc_min: "{{ [proxmox_zfs_arc_min_raw | int, 536870911] | max }}"
+    proxmox_zfs_arc_max: "{{ [proxmox_zfs_arc_max_raw | int, 536870912] | max }}"
+
+- name: Configure ZFS ARC tuning
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/99-xs-zfsarc.conf
+    content: |
+      # ashimov.com ZFS tuning
+      options zfs zfs_arc_min={{ proxmox_zfs_arc_min }}
+      options zfs zfs_arc_max={{ proxmox_zfs_arc_max }}
+      options zfs l2arc_noprefetch=0
+      options zfs l2arc_write_max=524288000
+      options zfs zfs_txg_timeout=60
+    owner: root
+    group: root
+    mode: "0644"
+  when: xs_zfsarc | lower == "yes"
+
+- name: Install zfs-auto-snapshot
+  ansible.builtin.apt:
+    name: zfs-auto-snapshot
+    state: present
+  when: xs_zfsautosnapshot | lower == "yes"
+
+- name: Check zfs-auto-snapshot cron file
+  ansible.builtin.stat:
+    path: /etc/cron.d/zfs-auto-snapshot
+  register: proxmox_zfs_auto_snapshot_cron
+  when: xs_zfsautosnapshot | lower == "yes"
+
+- name: Tune zfs-auto-snapshot cron schedule
+  ansible.builtin.replace:
+    path: /etc/cron.d/zfs-auto-snapshot
+    regexp: '--keep=[0-9]+'
+    replace: '--keep=12'
+  when: xs_zfsautosnapshot | lower == "yes" and proxmox_zfs_auto_snapshot_cron.stat.exists
+
+- name: Tune zfs-auto-snapshot interval
+  ansible.builtin.replace:
+    path: /etc/cron.d/zfs-auto-snapshot
+    regexp: '\*/[0-9]+'
+    replace: '*/5'
+  when: xs_zfsautosnapshot | lower == "yes" and proxmox_zfs_auto_snapshot_cron.stat.exists
+
+- name: Check hourly zfs-auto-snapshot cron
+  ansible.builtin.stat:
+    path: /etc/cron.hourly/zfs-auto-snapshot
+  register: proxmox_zfs_auto_snapshot_hourly
+  when: xs_zfsautosnapshot | lower == "yes"
+
+- name: Tune zfs-auto-snapshot hourly
+  ansible.builtin.replace:
+    path: /etc/cron.hourly/zfs-auto-snapshot
+    regexp: '--keep=[0-9]+'
+    replace: '--keep=24'
+  when: xs_zfsautosnapshot | lower == "yes" and proxmox_zfs_auto_snapshot_hourly.stat.exists
+
+- name: Check daily zfs-auto-snapshot cron
+  ansible.builtin.stat:
+    path: /etc/cron.daily/zfs-auto-snapshot
+  register: proxmox_zfs_auto_snapshot_daily
+  when: xs_zfsautosnapshot | lower == "yes"
+
+- name: Tune zfs-auto-snapshot daily
+  ansible.builtin.replace:
+    path: /etc/cron.daily/zfs-auto-snapshot
+    regexp: '--keep=[0-9]+'
+    replace: '--keep=7'
+  when: xs_zfsautosnapshot | lower == "yes" and proxmox_zfs_auto_snapshot_daily.stat.exists
+
+- name: Check weekly zfs-auto-snapshot cron
+  ansible.builtin.stat:
+    path: /etc/cron.weekly/zfs-auto-snapshot
+  register: proxmox_zfs_auto_snapshot_weekly
+  when: xs_zfsautosnapshot | lower == "yes"
+
+- name: Tune zfs-auto-snapshot weekly
+  ansible.builtin.replace:
+    path: /etc/cron.weekly/zfs-auto-snapshot
+    regexp: '--keep=[0-9]+'
+    replace: '--keep=4'
+  when: xs_zfsautosnapshot | lower == "yes" and proxmox_zfs_auto_snapshot_weekly.stat.exists
+
+- name: Check monthly zfs-auto-snapshot cron
+  ansible.builtin.stat:
+    path: /etc/cron.monthly/zfs-auto-snapshot
+  register: proxmox_zfs_auto_snapshot_monthly
+  when: xs_zfsautosnapshot | lower == "yes"
+
+- name: Tune zfs-auto-snapshot monthly
+  ansible.builtin.replace:
+    path: /etc/cron.monthly/zfs-auto-snapshot
+    regexp: '--keep=[0-9]+'
+    replace: '--keep=3'
+  when: xs_zfsautosnapshot | lower == "yes" and proxmox_zfs_auto_snapshot_monthly.stat.exists

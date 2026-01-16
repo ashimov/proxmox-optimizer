@@ -1,0 +1,24 @@
+# proxmox_lxc_docker role defaults
+# ============================================================================
+# WARNING: Running Docker inside LXC containers requires elevated privileges
+# and creates potential security risks. This role is opt-in by design.
+#
+# It is STRONGLY recommended to use a dedicated VM for Docker workloads.
+# ============================================================================
+
+# Container ID to configure (required)
+lxc_docker_container_id: ""
+
+# Explicitly confirm you understand the security implications
+lxc_docker_confirm: false
+
+# LXC configuration options to add
+lxc_docker_config_lines:
+  - "lxc.apparmor.profile: unconfined"
+  - "lxc.cgroup.devices.allow: a"
+  - "lxc.cap.drop:"
+  - "linux.kernel_modules: aufs ip_tables"
+  - "lxc.mount.auto: proc:rw sys:rw"
+
+# Whether to restart the container after configuration
+lxc_docker_restart_container: true

@@ -1,0 +1,31 @@
+---
+# Convert MD RAID to ZFS SLOG/cache
+# WARNING: This is a DESTRUCTIVE operation!
+#
+# Usage:
+#   ansible-playbook playbooks/zfs-slog-cache.yml -i inventory.yml \
+#     -e "zfs_pool_name=hddpool zfs_slog_cache_confirm=true"
+#
+- name: Convert MD RAID to ZFS SLOG/cache
+  hosts: proxmox_nodes
+  become: true
+
+  vars_prompt:
+    - name: confirm_destruction
+      prompt: |
+        WARNING: This will DESTROY all data on the MD RAID devices!
+        Type 'DESTROY' to confirm
+      private: false
+
+  pre_tasks:
+    - name: Abort if not confirmed
+      ansible.builtin.fail:
+        msg: "Operation cancelled - confirmation not received"
+      when: confirm_destruction != "DESTROY"
+
+    - name: Set confirmation variable
+      ansible.builtin.set_fact:
+        zfs_slog_cache_confirm: true
+
+  roles:
+    - role: proxmox_zfs_slog_cache

@@ -1,0 +1,16 @@
+# proxmox_nvidia role defaults
+# ============================================================================
+# Configures NVIDIA Docker runtime for GPU passthrough support
+# ============================================================================
+
+# NVIDIA Docker configuration
+nvidia_docker_enabled: true
+
+# Whether to reboot after installation
+nvidia_docker_reboot: false
+
+# NVIDIA repository base URL
+nvidia_docker_repo_url: "https://nvidia.github.io/nvidia-docker"
+
+# GPG key URL
+nvidia_docker_gpg_url: "https://nvidia.github.io/nvidia-docker/gpgkey"

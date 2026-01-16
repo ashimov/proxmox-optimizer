@@ -1,0 +1,10 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart tinc
+  ansible.builtin.systemd:
+    name: "tinc-{{ tinc_network_name }}"
+    state: restarted
+  when: ansible_connection != "local"

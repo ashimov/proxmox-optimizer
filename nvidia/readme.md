@@ -6,6 +6,27 @@
 
 Scripts and instructions for enabling NVIDIA GPU support on Proxmox VE hosts, including Docker integration.
 
+> **Recommended:** Use Ansible roles for repeatable, idempotent deployments.
+> See [ansible/README.md](../ansible/README.md) for details.
+
+## Ansible Role
+
+| Role | Description | Playbook |
+|------|-------------|----------|
+| `proxmox_nvidia` | NVIDIA Docker runtime for GPU passthrough | `playbooks/nvidia-docker.yml` |
+
+### Ansible Usage
+
+```bash
+cd ansible
+
+# Install NVIDIA Docker runtime
+ansible-playbook playbooks/nvidia-docker.yml -i inventory/hosts.ini
+
+# Skip reboot
+ansible-playbook playbooks/nvidia-docker.yml -i inventory/hosts.ini -e nvidia_docker_reboot=false
+```
+
 ## Prerequisites
 
 ```bash
@@ -46,6 +67,7 @@ After GPU driver installation, install nvidia-docker:
 
 ```bash
 ./nvidia-docker.sh
+NVIDIA_DOCKER_REBOOT=no ./nvidia-docker.sh
 ```
 
 ## Advanced Configuration
@@ -78,25 +100,30 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 |--------|-------------|
 | `nvidia-docker.sh` | Installs nvidia-docker2 for GPU container support |
 
+### Fan Control Example
+
+> **Note:** Replace `121` with your actual user ID from `/run/user/`.
+
+```bash
+# Set fan speed to 80-85% for GPUs 0-3
+DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority \
+  sudo nvidia-settings -a [gpu:0]/GPUFanControlState=1 -a [fan-0]/GPUTargetFanSpeed=80
+
+DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority \
+  sudo nvidia-settings -a [gpu:1]/GPUFanControlState=1 -a [fan-1]/GPUTargetFanSpeed=80
+```
+
+### Overclocking Example
+
+```bash
+# Set clock offset +150 and memory offset +600 for GPU 0
+DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority \
+  nvidia-settings -a '[gpu:0]/GPUGraphicsClockOffset[3]=150'
+
+DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority \
+  nvidia-settings -a '[gpu:0]/GPUMemoryTransferRateOffset[3]=600'
+```
+
 ---
+
 *Part of [Proxmox Optimizer](https://github.com/ashimov/proxmox-optimizer)*
-
-
-replace $SOMENUBMER in lines below! :)
-
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority sudo nvidia-settings -a [gpu:0]/GPUFanControlState=1 -a [fan-0]/GPUTargetFanSpeed=80
-sleep 3
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority sudo nvidia-settings -a [gpu:1]/GPUFanControlState=1 -a [fan-1]/GPUTargetFanSpeed=80
-sleep 3
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority sudo nvidia-settings -a [gpu:2]/GPUFanControlState=1 -a [fan-2]/GPUTargetFanSpeed=80
-sleep 3
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority sudo nvidia-settings -a [gpu:3]/GPUFanControlState=1 -a [fan-3]/GPUTargetFanSpeed=85
-
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:0]/GPUGraphicsClockOffset[3]=150'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:0]/GPUMemoryTransferRateOffset[3]=600'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:1]/GPUGraphicsClockOffset[3]=150'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:1]/GPUMemoryTransferRateOffset[3]=600'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:2]/GPUGraphicsClockOffset[3]=150'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:2]/GPUMemoryTransferRateOffset[3]=600'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:3]/GPUGraphicsClockOffset[3]=150'
-DISPLAY=:0 XAUTHORITY=/run/user/121/gdm/Xauthority nvidia-settings -a '[gpu:3]/GPUMemoryTransferRateOffset[3]=600'

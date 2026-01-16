@@ -1,0 +1,7 @@
+Name = {{ tinc_node_name }}
+AddressFamily = ipv4
+Interface = Tun0
+Mode = switch
+{% if tinc_connect_to | length > 0 %}
+ConnectTo = {{ tinc_connect_to | replace('-', '_') }}
+{% endif %}

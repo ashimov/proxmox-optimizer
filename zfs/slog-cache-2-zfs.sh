@@ -32,6 +32,10 @@
 #
 ################################################################################
 
+# Exit on error, pipe failures
+set -e
+set -o pipefail
+
 # Set the local
 export LANG="en_US.UTF-8"
 export LC_ALL="C"
@@ -149,14 +153,14 @@ for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
   if [ "$XSHOK_MOUNT_POINT" == "/xshok/zfs-cache" ] ; then
     echo "Adding ${mddevarray[*]} to ${MY_ZFS_POOL} as CACHE"
     printf '%s\n' "${MY_MD_DEV_PATHS[@]}"
-    zpool add ${MY_ZFS_POOL} cache "${MY_MD_DEV_PATHS[@]}"
+    zpool add "${MY_ZFS_POOL}" cache "${MY_MD_DEV_PATHS[@]}"
   elif [ "$XSHOK_MOUNT_POINT" == "/xshok/zfs-slog" ] ; then
     echo "Adding ${mddevarray[*]} to ${MY_ZFS_POOL} as SLOG"
     printf '%s\n' "${MY_MD_DEV_PATHS[@]}"
     if [ "${#mddevarray[@]}" -eq "1" ] ; then
-      zpool add ${MY_ZFS_POOL} log "${MY_MD_DEV_PATHS[@]}"
+      zpool add "${MY_ZFS_POOL}" log "${MY_MD_DEV_PATHS[@]}"
     else
-      zpool add ${MY_ZFS_POOL} log mirror "${MY_MD_DEV_PATHS[@]}"
+      zpool add "${MY_ZFS_POOL}" log mirror "${MY_MD_DEV_PATHS[@]}"
     fi
   else
     echo "SKIPPING: Nothing todo with the partions"

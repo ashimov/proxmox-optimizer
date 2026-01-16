@@ -1,0 +1,82 @@
+# =============================================================================
+# Global Configuration Defaults
+# =============================================================================
+# This file uses "yes"/"no" string values to match existing script behavior.
+#
+# VARIABLE NAMING CONVENTION:
+# - Legacy variables use "xs_" prefix (for backward compatibility)
+# - New variables use "proxmox_" prefix with role-specific naming
+# - Example: xs_fail2ban -> proxmox_security_fail2ban (in future versions)
+#
+# SECRETS:
+# - Never store credentials here - use host_vars/ with ansible-vault
+# - See documentation for secure credential management
+# =============================================================================
+
+# Global defaults. Use "yes"/"no" to match existing script behavior.
+xs_amdfixes: "yes"
+xs_aptipv4: "yes"
+xs_aptupgrade: "yes"
+xs_bashrc: "yes"
+xs_ceph: "no"
+xs_disablerpc: "yes"
+xs_entropy: "yes"
+xs_fail2ban: "yes"
+xs_guestagent: "yes"
+xs_ifupdown2: "yes"
+xs_journald: "yes"
+xs_kernelheaders: "yes"
+xs_ksmtuned: "yes"
+xs_lang: "en_US.UTF-8"
+xs_kernelpanic: "yes"
+xs_limits: "yes"
+xs_logrotate: "yes"
+xs_lynis: "yes"
+xs_maxfs: "yes"
+xs_memoryfixes: "yes"
+xs_motd: "yes"
+xs_net: "yes"
+xs_noaptlang: "yes"
+xs_manage_sources_list: "yes"
+xs_noentrepo: "yes"
+xs_nosubbanner: "yes"
+xs_openvswitch: "no"
+xs_ovhrtm: "yes"
+xs_ovh_rtm_allow_unverified: "no"
+xs_ovh_rtm_sha256: ""
+xs_pigz: "yes"
+xs_swappiness: "yes"
+xs_tcpbbr: "yes"
+xs_tcpfastopen: "yes"
+xs_testrepo: "no"
+xs_timesync: "yes"
+xs_timezone: ""
+xs_utils: "yes"
+xs_vzdump: "yes"
+xs_zfsarc: "yes"
+xs_zfsautosnapshot: "no"
+xs_vfio_iommu: "yes"
+
+# Ansible-specific toggles
+proxmox_provider: ""
+proxmox_configure_networking: "no"
+
+# Hetzner Storage Box (optional; set in host_vars for secrets)
+xs_hetzner_storagebox_user: ""
+xs_hetzner_storagebox_pass: ""
+xs_hetzner_storagebox_host: ""
+xs_hetzner_storagebox_share: "backup"
+
+# Hetzner Robot API (optional; set in host_vars for secrets)
+xs_hetzner_robot_user: ""
+xs_hetzner_robot_pass: ""
+
+# Networking variables (required when proxmox_configure_networking == "yes")
+proxmox_primary_interface: ""
+proxmox_bridge_name: "vmbr0"
+proxmox_bridge_address: ""
+proxmox_bridge_netmask: ""
+proxmox_bridge_gateway: ""
+proxmox_ipv6_address: ""
+proxmox_ipv6_gateway: ""
+proxmox_extra_routes: []

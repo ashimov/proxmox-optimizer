@@ -1,0 +1,26 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 200
+    level: error
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+  comments:
+    min-spaces-from-content: 1
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+# Only lint ansible/ directory (workflow handles this)
+ignore: |
+  node_modules/
+  venv/
+  .history/

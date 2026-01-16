@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: ashimov
+  description: Configure LXC container for Docker support (SECURITY WARNING)
+  license: BSD
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - lxc
+    - docker
+    - virtualization
+
+dependencies: []

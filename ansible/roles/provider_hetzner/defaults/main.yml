@@ -1,0 +1,43 @@
+---
+# Defaults for provider_hetzner role
+# These can be overridden in inventory/group_vars/all.yml or host_vars
+
+# Auto-detect Hetzner server by ASN lookup
+xs_hetzner_detect: true
+
+# Force Hetzner configuration even if server is not detected as Hetzner
+xs_hetzner_force: false
+
+# Apply Hetzner-specific network tuning
+xs_hetzner_network_tuning: true
+
+# Enable Hetzner Robot API integration (requires credentials in /root/.hetzner-robot)
+xs_hetzner_robot: false
+
+# Enable Hetzner Storage Box mounting
+xs_hetzner_storagebox: false
+
+# Storage Box mount point
+xs_hetzner_storagebox_mount: "/mnt/storagebox"
+
+# Storage Box credentials (set in host_vars for security)
+# xs_hetzner_storagebox_user: ""
+# xs_hetzner_storagebox_pass: ""
+# xs_hetzner_storagebox_host: ""
+xs_hetzner_storagebox_share: "backup"
+xs_hetzner_storagebox_credentials_file: "/root/.storagebox-credentials"
+
+# Hetzner Robot API integration
+xs_hetzner_robot_endpoint: "https://robot-ws.your-server.de"
+xs_hetzner_robot_user: ""
+xs_hetzner_robot_pass: ""
+xs_hetzner_robot_output: "/root/hetzner-robot-servers.json"
+# Optional RDNS entries to manage via Robot API
+# xs_hetzner_robot_rdns:
+#   - ip: "203.0.113.10"
+#     ptr: "host.example.com"
+xs_hetzner_robot_rdns: []
+
+# NOTE: Hetzner installimage workflows require rescue mode and cannot be
+# automated via Ansible. For fresh installations, use:
+#   hetzner/installimage-proxmox.sh hostname.fqdn.com [pve8|pve9|pbs]

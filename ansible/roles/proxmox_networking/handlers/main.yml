@@ -1,0 +1,6 @@
+---
+- name: Reload sysctl
+  ansible.builtin.command: sysctl --system
+  register: sysctl_reload
+  changed_when: false
+  failed_when: sysctl_reload.rc != 0 and not (sysctl_reload.stderr | default('') is search('No such file or directory'))

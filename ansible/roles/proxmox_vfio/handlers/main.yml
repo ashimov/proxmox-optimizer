@@ -1,0 +1,8 @@
+- name: Update initramfs
+  ansible.builtin.command: update-initramfs -u -k all
+
+- name: Update grub
+  ansible.builtin.command: update-grub
+
+- name: Refresh EFI boot
+  ansible.builtin.command: pve-efiboot-tool refresh

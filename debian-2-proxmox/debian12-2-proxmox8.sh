@@ -32,6 +32,9 @@
 #
 ################################################################################
 
+set -e
+set -o pipefail
+
 # Set the local
 export LANG="en_US.UTF-8"
 export LC_ALL="C"
@@ -53,6 +56,15 @@ source /etc/os-release
 if [ "$VERSION_CODENAME" != "bookworm" ]; then
   echo "ERROR: This script is for Debian 12 (Bookworm) only"
   echo "Detected: $PRETTY_NAME"
+  exit 1
+fi
+
+# Validate FQDN hostname (required for Proxmox)
+my_hostname="$(hostname -f 2>/dev/null || hostname)"
+if [[ ! "$my_hostname" =~ \. ]]; then
+  echo "ERROR: A valid FQDN hostname is required for Proxmox installation"
+  echo "Current hostname: $my_hostname"
+  echo "Please set a FQDN hostname first, e.g.: hostnamectl set-hostname server.example.com"
   exit 1
 fi
 
@@ -109,7 +121,10 @@ EOF
 
 echo "Add Proxmox VE 8 repo to APT sources"
 mkdir -p /etc/apt/keyrings
-wget -q "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg" -O /etc/apt/keyrings/proxmox-release-bookworm.gpg
+if ! wget -q "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg" -O /etc/apt/keyrings/proxmox-release-bookworm.gpg; then
+  echo "ERROR: Failed to download Proxmox GPG key"
+  exit 1
+fi
 cat <<EOF > /etc/apt/sources.list.d/pve-no-subscription.list
 # PVE packages provided by proxmox.com
 deb [arch=amd64 signed-by=/etc/apt/keyrings/proxmox-release-bookworm.gpg] https://download.proxmox.com/debian/pve bookworm pve-no-subscription
@@ -159,10 +174,33 @@ pveum aclmod / -group admin -role Administrator
 pveum useradd admin@pve -comment "Admin" 2>/dev/null || true
 pveum usermod admin@pve -group admin
 
-echo "Fetching postinstall script"
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh -c -O install-post.sh && chmod +x install-post.sh
-if grep -q '#!/usr/bin/env bash' "install-post.sh"; then
-  bash install-post.sh
+echo "Preparing postinstall script"
+install_post_path="./install-post.sh"
+if [ -f "$install_post_path" ]; then
+  echo "Using local install-post.sh"
+else
+  if [ "${XS_ALLOW_REMOTE_INSTALL_POST,,}" == "yes" ] ; then
+    if ! wget -q https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh -O "$install_post_path" ; then
+      echo "ERROR: Failed to download install-post.sh"
+      exit 1
+    fi
+    chmod +x "$install_post_path"
+    if [ "$XS_INSTALL_POST_SHA256" != "" ] ; then
+      if ! echo "${XS_INSTALL_POST_SHA256}  ${install_post_path}" | sha256sum -c - ; then
+        echo "ERROR: install-post.sh checksum verification failed"
+        exit 1
+      fi
+    else
+      echo "ERROR: XS_INSTALL_POST_SHA256 not set; refusing to run unverified install-post.sh"
+      exit 1
+    fi
+  else
+    echo "Skipping install-post.sh download. Set XS_ALLOW_REMOTE_INSTALL_POST=yes and XS_INSTALL_POST_SHA256 to enable."
+    install_post_path=""
+  fi
+fi
+if [ "$install_post_path" != "" ] && [ -f "$install_post_path" ] && grep -q '#!/usr/bin/env bash' "$install_post_path"; then
+  bash "$install_post_path"
 fi
 
 echo "Setting admin user password"

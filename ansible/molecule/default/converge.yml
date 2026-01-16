@@ -1,0 +1,8 @@
+---
+- name: Molecule converge (noop)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Molecule smoke task
+      ansible.builtin.debug:
+        msg: "Molecule converge completed"

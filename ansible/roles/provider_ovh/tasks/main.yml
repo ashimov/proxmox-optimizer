@@ -1,0 +1,107 @@
+---
+# OVH Provider Role - Installs OVH Real Time Monitoring (RTM)
+
+# Auto-detect OVH server by checking ASN
+- name: Get public IP address
+  ansible.builtin.uri:
+    url: https://ipinfo.io/ip
+    return_content: yes
+    timeout: 10
+  register: public_ip_result
+  failed_when: false
+  when: xs_ovhrtm | lower == "yes"
+
+- name: Validate OVH public IP
+  ansible.builtin.set_fact:
+    ovh_public_ip: "{{ public_ip_result.content | trim }}"
+    ovh_public_ip_valid: "{{ (public_ip_result.content | trim | ansible.utils.ipaddr('address')) is not false }}"
+  when: xs_ovhrtm | lower == "yes" and public_ip_result.status | default(0) == 200
+
+- name: Install whois for ASN lookup
+  ansible.builtin.apt:
+    name: whois
+    state: present
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - public_ip_result.status | default(0) == 200
+    - ovh_public_ip_valid | default(false)
+
+- name: Check OVH ASN lookup
+  ansible.builtin.command:
+    argv:
+      - whois
+      - -h
+      - v4.whois.cymru.com
+      - -t
+      - "{{ ovh_public_ip }}"
+  register: ovh_asn_check
+  changed_when: false
+  failed_when: false
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - public_ip_result.status | default(0) == 200
+    - ovh_public_ip_valid | default(false)
+
+- name: Set OVH detection fact
+  ansible.builtin.set_fact:
+    is_ovh_server: "{{ 'ovh' in (ovh_asn_check.stdout | default('') | lower) }}"
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - ovh_public_ip_valid | default(false)
+
+- name: Skip OVH detection on invalid public IP
+  ansible.builtin.set_fact:
+    is_ovh_server: false
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - public_ip_result.status | default(0) == 200
+    - not (ovh_public_ip_valid | default(false))
+
+- name: Display OVH detection result
+  ansible.builtin.debug:
+    msg: "OVH server detected: {{ is_ovh_server | default(false) }}"
+  when: xs_ovhrtm | lower == "yes"
+
+# Only proceed with RTM installation if OVH server is detected (or force install)
+- name: Assert OVH RTM checksum settings
+  ansible.builtin.fail:
+    msg: "XS_OVH_RTM_SHA256 is required unless XS_OVH_RTM_ALLOW_UNVERIFIED is set to yes"
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - is_ovh_server | default(false) or xs_ovh_force_install | default(false)
+    - xs_ovh_rtm_sha256 | length == 0
+    - xs_ovh_rtm_allow_unverified | lower != "yes"
+
+- name: Download OVH RTM installer
+  ansible.builtin.get_url:
+    url: https://last-public-ovh-infra-yak.snap.mirrors.ovh.net/yak/archives/apply.sh
+    dest: /tmp/ovh-rtm.sh
+    mode: "0755"
+    checksum: "{{ 'sha256:' + xs_ovh_rtm_sha256 if xs_ovh_rtm_sha256 | length > 0 else omit }}"
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - is_ovh_server | default(false) or xs_ovh_force_install | default(false)
+
+- name: Run OVH RTM installer
+  ansible.builtin.command: /tmp/ovh-rtm.sh
+  environment:
+    OVH_PUPPET_MANIFEST: distribyak/catalog/master/puppet/manifests/common/rtmv2.pp
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - is_ovh_server | default(false) or xs_ovh_force_install | default(false)
+  register: ovh_rtm_result
+  changed_when: ovh_rtm_result.rc == 0
+
+- name: Clean up OVH RTM installer
+  ansible.builtin.file:
+    path: /tmp/ovh-rtm.sh
+    state: absent
+  when: xs_ovhrtm | lower == "yes"
+
+- name: Skip OVH RTM - not an OVH server
+  ansible.builtin.debug:
+    msg: "Skipping OVH RTM installation - server is not on OVH network. Set xs_ovh_force_install=true to force installation."
+  when:
+    - xs_ovhrtm | lower == "yes"
+    - not (is_ovh_server | default(false))
+    - not (xs_ovh_force_install | default(false))

@@ -1,0 +1,24 @@
+---
+# Defaults for proxmox_networking role
+# These can be overridden in inventory/group_vars/all.yml or host_vars
+
+# Primary network interface (required)
+proxmox_primary_interface: ""
+
+# Bridge configuration
+proxmox_bridge_name: "vmbr0"
+proxmox_bridge_address: ""
+proxmox_bridge_netmask: ""
+proxmox_bridge_gateway: ""
+
+# IPv6 configuration (optional)
+proxmox_ipv6_address: ""
+proxmox_ipv6_gateway: ""
+proxmox_ipv6_netmask: "64"
+
+# Extra routed IP ranges (optional)
+# Example:
+# proxmox_extra_routes:
+#   - cidr: "198.51.100.128/27"
+#     interface: "vmbr0"
+proxmox_extra_routes: []

@@ -1,0 +1,23 @@
+---
+# Install NVIDIA Docker runtime for GPU passthrough support
+# ============================================================================
+# This playbook configures the NVIDIA Container Toolkit (nvidia-docker2)
+# for GPU passthrough to Docker containers.
+#
+# Prerequisites:
+#   - Docker must be installed
+#   - NVIDIA GPU must be present and accessible
+#
+# Usage:
+#   ansible-playbook playbooks/nvidia-docker.yml
+#
+#   # With reboot after installation:
+#   ansible-playbook playbooks/nvidia-docker.yml -e nvidia_docker_reboot=true
+# ============================================================================
+
+- name: Install NVIDIA Docker runtime
+  hosts: proxmox
+  become: true
+  roles:
+    - role: proxmox_nvidia
+      tags: ["nvidia", "docker", "gpu"]

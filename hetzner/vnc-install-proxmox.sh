@@ -72,9 +72,9 @@ fi
 
 MY_IFACE="$(udevadm info -e | grep -m1 -A 20 ^P.*eth0 | grep ID_NET_NAME_PATH | cut -d'=' -f2)"
 
-MY_IP4_AND_NETMASK="$(ip address show ${MY_IFACE} | grep global | grep "inet "| xargs | cut -d" " -f2)"
+MY_IP4_AND_NETMASK="$(ip address show "${MY_IFACE}" | grep global | grep "inet "| xargs | cut -d" " -f2)"
 
-MY_IP6_AND_NETMASK="$(ip address show ${MY_IFACE} | grep global | grep "inet6 "| xargs | cut -d" " -f2)"
+MY_IP6_AND_NETMASK="$(ip address show "${MY_IFACE}" | grep global | grep "inet6 "| xargs | cut -d" " -f2)"
 
 MY_IP4_GATEWAY="$(ip route | grep default | xargs | cut -d" " -f3)"
 

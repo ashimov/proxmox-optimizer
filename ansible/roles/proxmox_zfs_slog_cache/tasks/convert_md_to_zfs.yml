@@ -1,0 +1,101 @@
+---
+# Convert a single MD RAID mount point to ZFS cache or SLOG
+
+- name: Check if mount point is mounted - {{ mount_point }}
+  ansible.builtin.command: findmnt -n -o SOURCE {{ mount_point }}
+  register: mount_check
+  changed_when: false
+  failed_when: false
+
+- name: Skip if mount point not found
+  ansible.builtin.debug:
+    msg: "Skipping {{ mount_point }} - not mounted"
+  when: mount_check.rc != 0
+
+- name: Process MD RAID conversion
+  when: mount_check.rc == 0
+  block:
+    - name: Get MD device name
+      ansible.builtin.set_fact:
+        md_device: "{{ mount_check.stdout | trim }}"
+        md_device_name: "{{ mount_check.stdout | trim | regex_replace('^/dev/', '') }}"
+
+    - name: Get MD RAID member devices from /proc/mdstat
+      ansible.builtin.shell: |
+        set -o pipefail
+        grep "{{ md_device_name }} :" /proc/mdstat | cut -d ' ' -f5- | xargs
+      args:
+        executable: /bin/bash
+      register: md_members_raw
+      changed_when: false
+
+    - name: Parse MD member devices
+      ansible.builtin.set_fact:
+        md_members: "{{ md_members_raw.stdout.split() | map('regex_replace', '\\[.*\\]$', '') | map('regex_replace', '^', '/dev/') | list }}"
+
+    - name: Fail if no member devices found
+      ansible.builtin.fail:
+        msg: "No member devices found for {{ md_device }}"
+      when: md_members | length < 1
+
+    - name: Display devices to be converted
+      ansible.builtin.debug:
+        msg: "Converting {{ md_members | join(', ') }} to ZFS {{ zfs_vdev_type }}"
+
+    - name: Unmount MD device
+      ansible.posix.mount:
+        path: "{{ mount_point }}"
+        state: unmounted
+
+    - name: Stop MD RAID array
+      ansible.builtin.command: mdadm --stop {{ md_device }}
+      changed_when: true
+
+    - name: Remove MD RAID array
+      ansible.builtin.command: mdadm --remove {{ md_device }}
+      changed_when: true
+      failed_when: false
+
+    - name: Remove mount point from fstab
+      ansible.posix.mount:
+        path: "{{ mount_point }}"
+        state: absent
+
+    - name: Zero MD superblock on member devices
+      ansible.builtin.command: mdadm --zero-superblock {{ item }}
+      loop: "{{ md_members }}"
+      changed_when: true
+
+    - name: Get disk-by-id paths for devices
+      ansible.builtin.shell: |
+        for link in /dev/disk/by-id/*; do
+          if [ "$(readlink -f "$link")" = "{{ item }}" ]; then
+            echo "$link"
+            break
+          fi
+        done
+      register: by_id_paths
+      loop: "{{ md_members }}"
+      changed_when: false
+
+    - name: Build device path list
+      ansible.builtin.set_fact:
+        zfs_devices: "{{ by_id_paths.results | map(attribute='stdout') | select() | list | default(md_members) }}"
+
+    - name: Add cache devices to ZFS pool
+      ansible.builtin.command: >
+        zpool add {{ zfs_pool_name }} cache {{ zfs_devices | join(' ') }}
+      when: zfs_vdev_type == "cache"
+      changed_when: true
+
+    - name: Add single SLOG device to ZFS pool
+      ansible.builtin.command: >
+        zpool add {{ zfs_pool_name }} log {{ zfs_devices | join(' ') }}
+      when: zfs_vdev_type == "log" and zfs_devices | length == 1
+      changed_when: true
+
+    - name: Add mirrored SLOG devices to ZFS pool
+      ansible.builtin.command: >
+        zpool add {{ zfs_pool_name }} log mirror {{ zfs_devices | join(' ') }}
+      when: zfs_vdev_type == "log" and zfs_devices | length > 1
+      changed_when: true

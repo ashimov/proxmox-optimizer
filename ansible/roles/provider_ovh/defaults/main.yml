@@ -1,0 +1,15 @@
+---
+# Defaults for provider_ovh role
+# These can be overridden in inventory/group_vars/all.yml or host_vars
+
+# Install OVH Real Time Monitoring
+xs_ovhrtm: "yes"
+
+# Allow running unverified OVH RTM script (not recommended)
+xs_ovh_rtm_allow_unverified: "no"
+
+# SHA256 checksum for OVH RTM installer (recommended for security)
+xs_ovh_rtm_sha256: ""
+
+# Force OVH RTM installation even if server is not detected as OVH
+xs_ovh_force_install: false

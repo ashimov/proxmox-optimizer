@@ -3,7 +3,8 @@
 <div align="center">
 
 [![OVH](https://img.shields.io/badge/Provider-OVH-0050D8.svg)](https://www.ovh.com/)
-[![Proxmox VE](https://img.shields.io/badge/Proxmox%20VE-8.x-green.svg)](https://www.proxmox.com/)
+[![Proxmox VE 9.x](https://img.shields.io/badge/Proxmox%20VE-9.x-orange.svg)](https://www.proxmox.com/)
+[![Proxmox VE 8.x](https://img.shields.io/badge/Proxmox%20VE-8.x-green.svg)](https://www.proxmox.com/)
 
 *Professional installation guide for OVH dedicated servers*
 
@@ -65,7 +66,7 @@ chmod +x lvm-2-zfs.sh
 # REBOOT
 ```
 
-### 2. Network Configuration (vmbr0 + vmbr1)
+### 2. Network Configuration (vmbr0)
 
 ```bash
 wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh -c -O network-configure.sh
@@ -95,7 +96,8 @@ For setups with SSD raid1 partitions mounted as `/xshok/zfs-slog` and `/xshok/zf
 ```bash
 wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/createzfs.sh -c -O createzfs.sh
 chmod +x createzfs.sh
-./createzfs.sh poolname /dev/device1 /dev/device2
+ZFS_CONFIRM=yes ./createzfs.sh poolname /dev/device1 /dev/device2
+ZFS_DRYRUN=yes ./createzfs.sh poolname /dev/device1 /dev/device2
 ```
 
 ### Add ZFS Cache and SLOG
@@ -122,6 +124,33 @@ For SSD + HDD configurations:
 | ZFS SLOG | ext4 (RAID1) | /xshok/zfs-slog | 5 GB | SSD |
 | Swap | swap | - | 16-64 GB | Based on RAM |
 | Data | xfs (LVM) | /var/lib/vz | Remaining | HDD pool |
+
+---
+
+## OVH Networking Notes (Ansible)
+
+OVH routed IP blocks commonly use a /32 netmask with a gateway provided by OVH.
+Use the `proxmox_networking` role and set the required variables.
+
+Example:
+```yaml
+proxmox_configure_networking: "yes"
+proxmox_primary_interface: "eno1"
+proxmox_bridge_address: "203.0.113.10"
+proxmox_bridge_netmask: "255.255.255.255"
+proxmox_bridge_gateway: "203.0.113.1"
+proxmox_dhcp_public: "no"
+proxmox_extra_routes:
+  - cidr: "203.0.113.128/27"
+    interface: "vmbr0"
+```
+
+Enable the OVH provider role:
+```yaml
+proxmox_provider: "ovh"
+xs_ovhrtm: "yes"
+xs_ovh_rtm_sha256: "<sha256>"
+```
 
 ---
 

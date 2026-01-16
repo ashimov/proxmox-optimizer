@@ -1,0 +1,23 @@
+- name: Proxmox base configuration
+  hosts: proxmox
+  become: true
+  roles:
+    - role: proxmox_base
+      tags: ["base"]
+    - role: proxmox_security
+      tags: ["security"]
+    - role: proxmox_tuning
+      tags: ["tuning"]
+    - role: proxmox_zfs
+      tags: ["zfs"]
+    - role: proxmox_vfio
+      tags: ["vfio"]
+    - role: proxmox_networking
+      tags: ["networking"]
+      when: proxmox_configure_networking | lower == "yes"
+    - role: provider_ovh
+      tags: ["provider", "ovh"]
+      when: proxmox_provider | lower == "ovh"
+    - role: provider_hetzner
+      tags: ["provider", "hetzner"]
+      when: proxmox_provider | lower == "hetzner"

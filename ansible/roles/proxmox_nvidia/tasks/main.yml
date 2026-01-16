@@ -1,0 +1,84 @@
+---
+# proxmox_nvidia role - Configure NVIDIA Docker runtime
+# ============================================================================
+
+- name: Skip if NVIDIA Docker not enabled
+  ansible.builtin.meta: end_play
+  when: not nvidia_docker_enabled
+
+- name: Ensure gnupg is installed
+  ansible.builtin.apt:
+    name: gnupg
+    state: present
+    update_cache: true
+
+- name: Get distribution info
+  ansible.builtin.set_fact:
+    nvidia_distribution: "{{ ansible_distribution | lower }}{{ ansible_distribution_version }}"
+
+- name: Ensure keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download NVIDIA GPG key
+  ansible.builtin.get_url:
+    url: "{{ nvidia_docker_gpg_url }}"
+    dest: /tmp/nvidia-docker.gpgkey
+    mode: "0644"
+    timeout: 30
+
+- name: Dearmor NVIDIA GPG key
+  ansible.builtin.shell: |
+    gpg --dearmor -o /etc/apt/keyrings/nvidia-docker.gpg < /tmp/nvidia-docker.gpgkey
+  args:
+    creates: /etc/apt/keyrings/nvidia-docker.gpg
+  changed_when: true
+
+- name: Remove temporary GPG key
+  ansible.builtin.file:
+    path: /tmp/nvidia-docker.gpgkey
+    state: absent
+
+- name: Download NVIDIA repository list
+  ansible.builtin.get_url:
+    url: "{{ nvidia_docker_repo_url }}/{{ nvidia_distribution }}/nvidia-docker.list"
+    dest: /tmp/nvidia-docker.list
+    mode: "0644"
+    timeout: 30
+
+- name: Read NVIDIA repository list
+  ansible.builtin.slurp:
+    src: /tmp/nvidia-docker.list
+  register: nvidia_repo_content
+
+- name: Install NVIDIA repository with signed-by
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/nvidia-docker.list
+    content: "{{ nvidia_repo_content.content | b64decode | regex_replace('^deb https://', 'deb [signed-by=/etc/apt/keyrings/nvidia-docker.gpg] https://') }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove temporary repository file
+  ansible.builtin.file:
+    path: /tmp/nvidia-docker.list
+    state: absent
+
+- name: Update APT cache
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Install nvidia-docker2
+  ansible.builtin.apt:
+    name: nvidia-docker2
+    state: present
+  notify: Reload Docker daemon
+
+- name: Reboot if requested
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+  when: nvidia_docker_reboot

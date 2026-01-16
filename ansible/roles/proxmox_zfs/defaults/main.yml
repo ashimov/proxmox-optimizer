@@ -1,0 +1,9 @@
+---
+# Defaults for proxmox_zfs role
+# These can be overridden in inventory/group_vars/all.yml or host_vars
+
+# ZFS ARC size optimization based on RAM
+xs_zfsarc: "yes"
+
+# ZFS auto-snapshot installation and configuration
+xs_zfsautosnapshot: "no"

@@ -1,0 +1,147 @@
+---
+- name: Dangerous ops - create ZFS pool
+  hosts: proxmox
+  become: true
+  gather_facts: true
+
+  vars:
+    dangerous_confirm: "no"
+    dangerous_backup_dir: "/root/ansible-backups"
+    zfs_pool_name: ""
+    zfs_devices: []
+    zfs_script_path: "/root/ansible-scripts/createzfs.sh"
+
+  pre_tasks:
+    - name: Check for Proxmox
+      ansible.builtin.stat:
+        path: /etc/pve/.version
+      register: pve_version_file
+
+    - name: Abort if not Proxmox
+      ansible.builtin.assert:
+        that: pve_version_file.stat.exists
+        fail_msg: "This playbook requires Proxmox VE"
+
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - zfs_pool_name | length > 0
+          - zfs_devices | length > 0
+        fail_msg: "Set zfs_pool_name and zfs_devices (list of device paths)"
+
+    - name: Validate ZFS devices exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ zfs_devices }}"
+      register: zfs_device_stats
+
+    - name: Abort if any ZFS device is missing
+      ansible.builtin.assert:
+        that:
+          - zfs_device_stats.results | selectattr('stat.exists', 'equalto', true) | list | length == zfs_devices | length
+        fail_msg: "One or more zfs_devices paths do not exist on the target host"
+
+    - name: Show requested operation
+      ansible.builtin.debug:
+        msg: "Requested ZFS pool create: name={{ zfs_pool_name }}, devices={{ zfs_devices | join(', ') }}"
+
+    - name: Require confirmation for destructive action
+      ansible.builtin.debug:
+        msg: "Dry run only. Re-run with -e dangerous_confirm=yes to apply."
+      when: dangerous_confirm | lower != "yes"
+
+    - name: End play without changes
+      ansible.builtin.meta: end_play
+      when: dangerous_confirm | lower != "yes"
+
+  tasks:
+    - name: Ensure backup directory exists
+      ansible.builtin.file:
+        path: "{{ dangerous_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Set backup stamp
+      ansible.builtin.set_fact:
+        backup_stamp: "{{ ansible_date_time.epoch }}"
+
+    - name: Capture lsblk
+      ansible.builtin.command: lsblk -f
+      register: lsblk_out
+      changed_when: false
+
+    - name: Capture zpool list
+      ansible.builtin.command: zpool list
+      register: zpool_list_out
+      changed_when: false
+      failed_when: false
+
+    - name: Capture zpool status
+      ansible.builtin.command: zpool status
+      register: zpool_status_out
+      changed_when: false
+      failed_when: false
+
+    - name: Capture LVM state
+      ansible.builtin.command: pvs
+      register: pvs_out
+      changed_when: false
+      failed_when: false
+
+    - name: Write preflight backup report
+      ansible.builtin.copy:
+        dest: "{{ dangerous_backup_dir }}/zfs-create-{{ backup_stamp }}.log"
+        content: |
+          ## ZFS create preflight
+          pool_name={{ zfs_pool_name }}
+          devices={{ zfs_devices | join(' ') }}
+
+          == lsblk -f ==
+          {{ lsblk_out.stdout | default('') }}
+
+          == zpool list ==
+          rc={{ zpool_list_out.rc | default('') }}
+          {{ zpool_list_out.stdout | default('') }}
+          {{ zpool_list_out.stderr | default('') }}
+
+          == zpool status ==
+          rc={{ zpool_status_out.rc | default('') }}
+          {{ zpool_status_out.stdout | default('') }}
+          {{ zpool_status_out.stderr | default('') }}
+
+          == pvs ==
+          rc={{ pvs_out.rc | default('') }}
+          {{ pvs_out.stdout | default('') }}
+          {{ pvs_out.stderr | default('') }}
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Ensure scripts directory exists
+      ansible.builtin.file:
+        path: "{{ zfs_script_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy createzfs script to target
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../zfs/createzfs.sh"
+        dest: "{{ zfs_script_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Build createzfs command
+      ansible.builtin.set_fact:
+        zfs_create_cmd: "{{ [zfs_script_path, zfs_pool_name] + zfs_devices }}"
+
+    - name: Run createzfs script
+      ansible.builtin.command:
+        argv: "{{ zfs_create_cmd }}"
+      environment:
+        ZFS_CONFIRM: "yes"
+      changed_when: true

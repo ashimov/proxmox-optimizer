@@ -1,0 +1,32 @@
+---
+- name: Get Proxmox version
+  ansible.builtin.command: pveversion
+  register: proxmox_base_pveversion_out
+  changed_when: false
+
+- name: Set Proxmox major version
+  ansible.builtin.set_fact:
+    proxmox_base_pve_major: "{{ (proxmox_base_pveversion_out.stdout | regex_search('pve-manager/(\\d+)', '\\1') | default(['8'])) | first | int }}"
+
+- name: Select Ceph release
+  ansible.builtin.set_fact:
+    proxmox_base_ceph_release: "{{ 'squid' if proxmox_base_pve_major | int >= 9 else ('reef' if proxmox_base_pve_major | int >= 8 else 'quincy') }}"
+
+- name: Configure Ceph repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/ceph.list
+    content: "deb https://download.proxmox.com/debian/ceph-{{ proxmox_base_ceph_release }} {{ proxmox_os_codename }} main\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Update APT cache for Ceph
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Install Ceph packages
+  ansible.builtin.command: pveceph install
+  args:
+    stdin: "Y\n"
+    creates: /usr/bin/ceph
+  when: proxmox_base_pve_major | int >= 7

@@ -1,0 +1,12 @@
+---
+# ZFS pool name to add SLOG/cache to
+zfs_pool_name: "hddpool"
+
+# Mount points for MD RAID devices to convert
+# Only existing mount points will be processed
+zfs_cache_mount_point: "/xshok/zfs-cache"
+zfs_slog_mount_point: "/xshok/zfs-slog"
+
+# Safety: require explicit confirmation
+# Set to true to allow destructive operations
+zfs_slog_cache_confirm: false

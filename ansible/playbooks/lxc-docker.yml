@@ -1,0 +1,20 @@
+---
+# Configure LXC container for Docker support
+# ============================================================================
+# WARNING: This playbook disables security features in the specified
+# LXC container. Only use when you understand the security implications.
+#
+# Usage:
+#   ansible-playbook playbooks/lxc-docker.yml \
+#     -e lxc_docker_container_id=100 \
+#     -e lxc_docker_confirm=true
+#
+# It is STRONGLY recommended to use a dedicated VM for Docker workloads.
+# ============================================================================
+
+- name: Configure LXC container for Docker
+  hosts: proxmox
+  become: true
+  roles:
+    - role: proxmox_lxc_docker
+      tags: ["lxc", "docker"]
