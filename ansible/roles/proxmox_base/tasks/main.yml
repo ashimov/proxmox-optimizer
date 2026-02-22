@@ -82,10 +82,10 @@
   ansible.builtin.set_fact:
     proxmox_repo_key_path: >-
       {{ '/usr/share/keyrings/proxmox-archive-keyring.gpg'
-         if proxmox_archive_keyring.stat.exists
+         if (proxmox_archive_keyring.stat | default({})).get('exists', false)
          else '/etc/apt/keyrings/proxmox-release-' ~ proxmox_os_codename ~ '.gpg' }}
     proxmox_repo_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-{{ proxmox_os_codename }}.gpg"
-    proxmox_repo_key_needs_download: "{{ not proxmox_release_keyring.stat.exists and not proxmox_archive_keyring.stat.exists }}"
+    proxmox_repo_key_needs_download: "{{ not (proxmox_release_keyring.stat | default({})).get('exists', false) and not (proxmox_archive_keyring.stat | default({})).get('exists', false) }}"
   when: xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
 
 - name: Ensure APT keyrings directory exists
@@ -235,13 +235,7 @@
 
 - name: Set common utilities package list
   ansible.builtin.set_fact:
-    proxmox_utils_packages: "{{ (xs_utils_packages | reject('equalto', 'mlocate') | list + ['plocate']) | unique }}"
-  when: proxmox_os_codename in ['bookworm', 'trixie', 'sid']
-
-- name: Set common utilities package list (default)
-  ansible.builtin.set_fact:
     proxmox_utils_packages: "{{ xs_utils_packages }}"
-  when: proxmox_os_codename not in ['bookworm', 'trixie', 'sid']
 
 - name: Check availability of common utilities packages
   ansible.builtin.command: "apt-cache show {{ item }}"
@@ -326,10 +320,17 @@
     state: started
   when: xs_timesync | lower == "yes"
 
+- name: Get current timezone
+  ansible.builtin.command: timedatectl show --property=Timezone --value
+  register: current_timezone
+  changed_when: false
+
 - name: Set timezone
   ansible.builtin.command: timedatectl set-timezone "{{ xs_timezone }}"
-  when: xs_timezone | length > 0
-  changed_when: false
+  when:
+    - xs_timezone | length > 0
+    - current_timezone.stdout | default('') != xs_timezone
+  changed_when: true
 
 - name: Install guest agent on KVM/QEMU
   ansible.builtin.apt:

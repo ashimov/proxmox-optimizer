@@ -53,7 +53,7 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    mode: "0755"
+    mode: "0700"
   loop:
     - "/etc/tinc/{{ tinc_network_name }}"
     - "/etc/tinc/{{ tinc_network_name }}/hosts"
@@ -70,11 +70,20 @@
     stdin: "\n\n"
   when: not rsa_key_stat.stat.exists
   changed_when: true
+  register: tinc_keygen_result
+  failed_when: tinc_keygen_result.rc != 0
+
+- name: Verify generated keys exist
+  ansible.builtin.stat:
+    path: "/etc/tinc/{{ tinc_network_name }}/rsa_key.pub"
+  register: rsa_key_pub_stat
+  failed_when: not rsa_key_pub_stat.stat.exists
 
 - name: Read public key
   ansible.builtin.slurp:
     src: "/etc/tinc/{{ tinc_network_name }}/rsa_key.pub"
   register: rsa_public_key
+  no_log: true
 
 - name: Create tinc.conf
   ansible.builtin.template:
@@ -135,10 +144,11 @@
     dest: /etc/network/interfaces.d/tinc-vpn.cfg
     mode: "0644"
 
-- name: Enable tinc service
+- name: Enable and start tinc service
   ansible.builtin.systemd:
     name: "tinc-{{ tinc_network_name }}"
     enabled: true
+    state: started
     daemon_reload: true
 
 - name: Display host info for other nodes

@@ -1,10 +1,15 @@
 ---
+- name: Check if rpcbind service exists
+  ansible.builtin.stat:
+    path: /lib/systemd/system/rpcbind.service
+  register: rpcbind_service
+
 - name: Disable rpcbind
   ansible.builtin.systemd:
     name: rpcbind
     enabled: false
     state: stopped
-  when: xs_disablerpc | lower == "yes"
+  when: xs_disablerpc | lower == "yes" and rpcbind_service.stat.exists
 
 - name: Install fail2ban
   ansible.builtin.apt:

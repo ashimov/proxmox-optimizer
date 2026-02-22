@@ -110,11 +110,12 @@
   ansible.builtin.set_fact:
     hetzner_robot_user_effective: "{{ xs_hetzner_robot_user | default('') }}"
     hetzner_robot_pass_effective: "{{ xs_hetzner_robot_pass | default('') }}"
+  no_log: true
   when: xs_hetzner_robot | default(false)
 
 - name: Load Hetzner Robot credentials from file
   ansible.builtin.slurp:
-    path: /root/.hetzner-robot
+    src: /root/.hetzner-robot
   register: hetzner_robot_creds_raw
   when:
     - xs_hetzner_robot | default(false)
@@ -130,7 +131,7 @@
   when:
     - xs_hetzner_robot | default(false)
     - is_hetzner_server | default(false) or xs_hetzner_force | default(false)
-    - hetzner_robot_creds_raw is defined
+    - hetzner_robot_creds_raw.content is defined
 
 - name: Ensure Hetzner Robot credentials are set
   ansible.builtin.assert:
@@ -252,7 +253,7 @@
       NOTE: Hetzner installimage workflows cannot be automated via Ansible.
       For fresh installations, use the rescue system with:
         - hetzner/installimage-proxmox.sh hostname.fqdn.com [pve8|pve9|pbs]
-      
+
       This role handles post-installation configurations only.
   when: is_hetzner_server | default(false) or xs_hetzner_force | default(false)
 

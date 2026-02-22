@@ -67,14 +67,13 @@ sleep 1
 for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
   echo "$XSHOK_MOUNT_POINT"
   #check mountpiont exists and is a device
-  XSHOK_MOUNT_POINT_DEV=$(mount | grep -i "$XSHOK_MOUNT_POINT" | cut -d " " -f 1)
-  ret=$?
-  if [ $ret == 0 ] && [ "$XSHOK_MOUNT_POINT_DEV" != "" ] ; then
+  XSHOK_MOUNT_POINT_DEV=$(mount | grep -F "$XSHOK_MOUNT_POINT" | cut -d " " -f 1 || true)
+  if [ "$XSHOK_MOUNT_POINT_DEV" != "" ] ; then
      echo "Found partition, continuing"
      echo "XSHOK_MOUNT_POINT_DEV=$XSHOK_MOUNT_POINT_DEV" #/dev/mapper/pve-data
   else
     echo "SKIPPING: $XSHOK_MOUNT_POINT not found"
-    break
+    continue
   fi
 
   #Detect and install dependencies
@@ -101,25 +100,29 @@ for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
     exit 1
   fi
 
-  XSHOK_MOUNT_POINT_MD_RAID=${XSHOK_MOUNT_POINT_DEV/\/dev\//}
+  XSHOK_MOUNT_POINT_MD_RAID="${XSHOK_MOUNT_POINT_DEV##*/}"
+  if [[ ! "$XSHOK_MOUNT_POINT_MD_RAID" =~ ^md[0-9]+$ ]]; then
+    echo "ERROR: $XSHOK_MOUNT_POINT_DEV does not appear to be an MD device (got: $XSHOK_MOUNT_POINT_MD_RAID)"
+    exit 1
+  fi
 
   IFS=' ' read -r -a mddevarray <<< "$(grep "$XSHOK_MOUNT_POINT_MD_RAID :" /proc/mdstat | cut -d ' ' -f5- | xargs)"
 
   if [ "${mddevarray[0]}" == "" ] ; then
     echo "ERROR: no devices found for $XSHOK_MOUNT_POINT_DEV in /proc/mdstat"
-    #exit 1
+    exit 1
   fi
   #check there is a minimum of 1 drives detected, not needed, but i rather have it.
   if [ "${#mddevarray[@]}" -lt "1" ] ; then
     echo "ERROR: less than 1 devices were detected"
-    #exit 1
+    exit 1
   fi
 
   # remove [*] and /dev/ to each record
   echo "Creating the device array"
   for index in "${!mddevarray[@]}" ; do
       tempmddevarraystring="${mddevarray[index]}"
-      mddevarray[$index]="/dev/${tempmddevarraystring%\[*\]}"
+      mddevarray[index]="/dev/${tempmddevarraystring%\[*\]}"
   done
 
   echo "Destroying MD (linux raid)"
@@ -127,10 +130,10 @@ for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
   umount -f "${XSHOK_MOUNT_POINT_DEV}"
   echo mdadm --stop "${XSHOK_MOUNT_POINT_DEV}"
   mdadm --stop "${XSHOK_MOUNT_POINT_DEV}"
-  echo mdadm --remove "${XSHOK_MOUNT_POINT_DEV}"
-  mdadm --remove "${XSHOK_MOUNT_POINT_DEV}"
   echo "Cleaning up fstab / mounts"
-  grep -v "$XSHOK_MOUNT_POINT" /etc/fstab > /tmp/fstab.new && mv /tmp/fstab.new /etc/fstab
+  fstab_tmp=$(mktemp /tmp/fstab.XXXXXX)
+  trap 'rm -f "$fstab_tmp"' EXIT
+  awk -v mp="$XSHOK_MOUNT_POINT" '/^[[:space:]]*#/ { print; next } NF >= 2 && $2 == mp { next } { print }' /etc/fstab > "$fstab_tmp" && mv "$fstab_tmp" /etc/fstab
 
   MY_MD_DEV_PATHS=()
   for MY_MD_DEV in "${mddevarray[@]}" ; do

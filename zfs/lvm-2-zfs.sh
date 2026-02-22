@@ -28,7 +28,7 @@
 # 2 Drives = mirror
 # 3-5 Drives = raidz-1
 # 6-11 Drives = raidz-2
-# 11+ Drives = raidz-3
+# 12+ Drives = raidz-3
 #
 # NOTE: WILL  DESTROY ALL DATA ON LVM_MOUNT_POINT, default is /var/lib/vz
 #
@@ -43,6 +43,10 @@
 #    THERE ARE NO USER CONFIGURABLE OPTIONS IN THIS SCRIPT
 #
 ################################################################################
+
+# Exit on error, pipe failures
+set -e
+set -o pipefail
 
 # Set the local
 export LANG="en_US.UTF-8"
@@ -95,9 +99,8 @@ echo "STARTING CONVERSION"
 sleep 1
 
 #check mountpiont exists and is a device
-MY_LVM_DEV=$(mount | grep -i "$LVM_MOUNT_POINT" | cut -d " " -f 1)
-ret=$?
-if [ $ret == 0 ] && [ "$MY_LVM_DEV" != "" ] ; then
+MY_LVM_DEV=$(mount | awk -v mp="$LVM_MOUNT_POINT" '$3 == mp {print $1}' || true)
+if [ "$MY_LVM_DEV" != "" ] ; then
    echo "Found partition, continuing"
    echo "MY_LVM_DEV=$MY_LVM_DEV" #/dev/mapper/pve-data
 else
@@ -120,28 +123,29 @@ if [ "$(command -v zpool)" == "" ] ; then
   exit 1
 fi
 
-MY_MD_RAID=$(pvdisplay 2> /dev/null  | sed -n -e 's/^.*\/dev\///p')
-ret=$?
-if [ $ret == 0 ] ; then
-   echo "Found raid, continuing"
-   echo "MY_MD_RAID=$MY_MD_RAID" #md5
-else
-  echo "ERROR: $MY_MD_RAID not found"
+MY_MD_RAID=$(pvdisplay 2>/dev/null | awk '/PV Name/{print $NF}' | sed 's|/dev/||' | head -1)
+if [ "$MY_MD_RAID" == "" ] ; then
+  echo "ERROR: MD RAID not found via pvdisplay"
   exit 1
 fi
+if ! [[ "$MY_MD_RAID" =~ ^md[0-9]+$ ]]; then
+  echo "ERROR: PV device '$MY_MD_RAID' is not an MD RAID device (expected mdN)"
+  exit 1
+fi
+echo "Found raid, continuing"
+echo "MY_MD_RAID=$MY_MD_RAID" #md5
 
 #pve/data
-MY_LV=$(lvdisplay "$MY_LVM_DEV" 2> /dev/null | sed -n -e 's/^.*\/dev\///p')
-ret=$?
-if [ $ret == 0 ] ; then
+MY_LV=$(lvdisplay "$MY_LVM_DEV" 2>/dev/null | awk '/LV Path/{print $NF}' | sed 's|/dev/||' | head -1)
+if [ "$MY_LV" != "" ] ; then
   echo "Found lv, continuing"
   echo "MY_LV=$MY_LV" #sda1
 else
-  echo "ERROR: $MY_LV not found"
+  echo "ERROR: Logical volume not found for $MY_LVM_DEV"
   exit 1
 fi
 
-IFS=' ' read -r -a mddevarray <<< "$(grep "$MY_MD_RAID :" /proc/mdstat | cut -d ' ' -f5- | xargs)"
+IFS=' ' read -r -a mddevarray <<< "$(grep -F "$MY_MD_RAID :" /proc/mdstat | cut -d ' ' -f5- | xargs)"
 
 if [ "${mddevarray[0]}" == "" ] ; then
   echo "ERROR: no devices found for $MY_MD_RAID in /proc/mdstat"
@@ -164,7 +168,7 @@ fi
 echo "Creating the device array"
 for index in "${!mddevarray[@]}" ; do
     tempmddevarraystring="${mddevarray[index]}"
-    mddevarray[$index]="/dev/${tempmddevarraystring%\[*\]}"
+    mddevarray[index]="/dev/${tempmddevarraystring%\[*\]}"
 done
 
 echo "Destroying LV (logical volume)"
@@ -179,43 +183,39 @@ mdadm --stop "/dev/$MY_MD_RAID"
 echo mdadm --remove "/dev/$MY_MD_RAID"
 mdadm --remove "/dev/$MY_MD_RAID"
 
-for MY_LVM_DEV in "${mddevarray[@]}" ; do
-    echo "zeroing $MY_LVM_DEV"
-    echo mdadm --zero-superblock "$MY_LVM_DEV"
-    mdadm --zero-superblock "$MY_LVM_DEV"
+for MY_MD_MEMBER in "${mddevarray[@]}" ; do
+    echo "zeroing $MY_MD_MEMBER"
+    echo mdadm --zero-superblock "$MY_MD_MEMBER"
+    mdadm --zero-superblock "$MY_MD_MEMBER"
 done
 
 # #used to make a max free space lvm
 # #lvcreate -n ZFS pve -l 100%FREE -y
+ret=0
 if [ "${#mddevarray[@]}" -eq "1" ] ; then
   echo "Creating ZFS single"
   echo zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool "${mddevarray[@]}"
-  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool "${mddevarray[@]}"
-  ret=$?
+  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool "${mddevarray[@]}" || ret=$?
 elif [ "${#mddevarray[@]}" -eq "2" ] ; then
   echo "Creating ZFS mirror (raid1)"
   echo zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool mirror "${mddevarray[@]}"
-  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool mirror "${mddevarray[@]}"
-  ret=$?
+  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool mirror "${mddevarray[@]}" || ret=$?
 elif [ "${#mddevarray[@]}" -ge "3" ] && [ "${#mddevarray[@]}" -le "5" ] ; then
   echo "Creating ZFS raidz-1 (raid5)"
   echo zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz "${mddevarray[@]}"
-  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz "${mddevarray[@]}"
-  ret=$?
-elif [ "${#mddevarray[@]}" -ge "6" ] && [ "${#mddevarray[@]}" -lt "11" ] ; then
+  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz "${mddevarray[@]}" || ret=$?
+elif [ "${#mddevarray[@]}" -ge "6" ] && [ "${#mddevarray[@]}" -le "11" ] ; then
   echo "Creating ZFS raidz-2 (raid6)"
   echo zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz2 "${mddevarray[@]}"
-  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz2 "${mddevarray[@]}"
-  ret=$?
-elif [ "${#mddevarray[@]}" -ge "11" ] ; then
+  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz2 "${mddevarray[@]}" || ret=$?
+elif [ "${#mddevarray[@]}" -ge "12" ] ; then
   echo "Creating ZFS raidz-3 (raid7)"
   echo zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz3 "${mddevarray[@]}"
-  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz3 "${mddevarray[@]}"
-  ret=$?
+  zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on rpool raidz3 "${mddevarray[@]}" || ret=$?
 fi
 
-if [ $ret != 0 ] ; then
-  echo "ERROR: creating ZFS"
+if [ "$ret" != 0 ] ; then
+  echo "ERROR: creating ZFS (exit code: $ret)"
   exit 1
 fi
 
@@ -242,7 +242,9 @@ sleep 5
 
 echo "Cleaning up fstab / mounts"
 #/dev/pve/data   /var/lib/vz     ext3    defaults        1       2
-grep -v "$LVM_MOUNT_POINT" /etc/fstab > /tmp/fstab.new && mv /tmp/fstab.new /etc/fstab
+fstab_tmp=$(mktemp /tmp/fstab.XXXXXX)
+trap 'rm -f "$fstab_tmp"' EXIT
+awk -v mp="$LVM_MOUNT_POINT" '/^[[:space:]]*#/ { print; next } NF >= 2 && $2 == mp { next } { print }' /etc/fstab > "$fstab_tmp" && mv "$fstab_tmp" /etc/fstab
 
 echo "Optimising rpool"
 zfs set compression=on "rpool"

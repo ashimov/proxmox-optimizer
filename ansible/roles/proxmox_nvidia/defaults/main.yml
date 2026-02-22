@@ -1,3 +1,4 @@
+---
 # proxmox_nvidia role defaults
 # ============================================================================
 # Configures NVIDIA Docker runtime for GPU passthrough support

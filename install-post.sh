@@ -236,14 +236,18 @@ fi
 echo "Processing .... "
 
 # VARIABLES are overridden with install-post.env
-if [ -f "install-post.env" ] ; then
-    # Security: only source if owned by root and not world-writable
-    env_perms=$(stat -c %a "install-post.env" 2>/dev/null || echo "777")
-    env_owner=$(stat -c %u "install-post.env" 2>/dev/null || echo "9999")
-    if [ "$env_owner" == "0" ] && [ "${env_perms: -1}" -le 4 ]; then
+# Resolve env file relative to script's own directory (not CWD)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/install-post.env" ] ; then
+    # Security: only source if owned by root and not group/world-writable
+    env_perms=$(stat -c %a "${SCRIPT_DIR}/install-post.env" 2>/dev/null || echo "777")
+    env_owner=$(stat -c %u "${SCRIPT_DIR}/install-post.env" 2>/dev/null || echo "9999")
+    env_group_bit="${env_perms: -2:1}"
+    env_other_bit="${env_perms: -1}"
+    if [[ "$env_group_bit" =~ ^[0-9]$ ]] && [[ "$env_other_bit" =~ ^[0-9]$ ]] && [ "$env_owner" == "0" ] && [ "$env_group_bit" -le 4 ] && [ "$env_other_bit" -le 4 ]; then
         echo "Loading variables from install-post.env ..."
         # shellcheck disable=SC1091
-        source install-post.env
+        source "${SCRIPT_DIR}/install-post.env"
     else
         echo "WARNING: install-post.env has insecure ownership/permissions (owner=$env_owner, mode=$env_perms), skipping"
     fi
@@ -259,10 +263,12 @@ export LC_ALL="C"
 set -u
 IFS=$'\n\t'
 cleanup() {
-    # Cleanup temporary files on error
+    # Cleanup temporary files and give tee time to flush
     rm -f /tmp/ashimov-install-post.* 2>/dev/null || true
+    sleep 0.1 2>/dev/null || true
 }
-trap 'cleanup; echo "ERROR: install-post.sh failed at line $LINENO" >&2' ERR EXIT
+trap 'cleanup; echo "ERROR: install-post.sh failed at line $LINENO" >&2' ERR
+trap 'cleanup' EXIT
 
 ## Helper functions for idempotent operations
 
@@ -298,6 +304,42 @@ $content
 EOF
 }
 
+# Validate IP address format (IPv4 or IPv6)
+is_valid_ip() {
+    local ip="$1"
+    # IPv4 validation
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        local IFS='.'
+        # shellcheck disable=SC2206
+        local octets=($ip)
+        for octet in "${octets[@]}"; do
+            if [ "$octet" -gt 255 ]; then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    # IPv6 validation (simplified - accepts valid formats)
+    if [[ "$ip" =~ ^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$ ]] || \
+       [[ "$ip" =~ ^::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$ ]] || \
+       [[ "$ip" =~ ^([0-9a-fA-F]{1,4}:){1,6}:$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Add a parameter to GRUB_CMDLINE_LINUX_DEFAULT if not already present
+add_grub_cmdline_param() {
+    local param="$1"
+    if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+        if ! grep -qF "$param" /etc/default/grub; then
+            sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=\")([^\"]*)\"/\\1\\2 ${param}\"/" /etc/default/grub
+        fi
+    else
+        echo "GRUB_CMDLINE_LINUX_DEFAULT=\"${param}\"" >> /etc/default/grub
+    fi
+}
+
 if [ -n "$XS_LOG_FILE" ] ; then
     mkdir -p "$(dirname "$XS_LOG_FILE")"
     touch "$XS_LOG_FILE"
@@ -311,8 +353,8 @@ if [ ! -f "/etc/pve/.version" ] ; then
 fi
 
 if [ -f "/etc/ashimov" ] ; then
-  echo "ERROR: Script can only be run once"
-  exit 1
+  echo "Script has already been run. Remove /etc/ashimov to re-run."
+  exit 0
 fi
 
 # SET VARIBLES
@@ -329,7 +371,16 @@ if [ "$OS_CODENAME" == "" ] ; then
     echo "ERROR: VERSION_CODENAME not found in /etc/os-release"
     exit 1
 fi
-RAM_SIZE_GB=$(( $(vmstat -s | grep -i "total memory" | xargs | cut -d" " -f 1) / 1024 / 1000))
+RAM_SIZE_KB=$(vmstat -s | grep -i "total memory" | xargs | cut -d" " -f 1)
+if ! [[ "$RAM_SIZE_KB" =~ ^[0-9]+$ ]] || [ "$RAM_SIZE_KB" -eq 0 ]; then
+    echo "WARNING: Could not determine RAM size, defaulting to 16 GB"
+    RAM_SIZE_GB=16
+else
+    RAM_SIZE_GB=$(( RAM_SIZE_KB / 1024 / 1024 ))
+    if [ "$RAM_SIZE_GB" -eq 0 ]; then
+        RAM_SIZE_GB=1
+    fi
+fi
 
 if [ "${XS_LANG}" == "en_US.UTF-8" ] && [ "${XS_NOAPTLANG,,}" == "yes" ] ; then
     # save bandwidth and skip downloading additional languages
@@ -397,7 +448,7 @@ fi
 apt-get update > /dev/null 2>&1
 
 # Remove conflicting utilities
-/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' purge ntp openntpd systemd-timesyncd
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' purge ntp openntpd systemd-timesyncd || true
 
 # Fixes for common apt repo errors
 /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install apt-transport-https debian-archive-keyring ca-certificates curl
@@ -429,13 +480,10 @@ if [ "${XS_UTILS,,}" == "yes" ] ; then
     iperf \
     ipset \
     iptraf \
-    mlocate \
+    plocate \
     msr-tools \
     nano \
     net-tools \
-    omping \
-    software-properties-common \
-    sshpass \
     tmux \
     unzip \
     vim \
@@ -460,7 +508,7 @@ if [ "${XS_CEPH,,}" == "yes" ] ; then
     ## Refresh the package lists
     apt-get update > /dev/null 2>&1
     ## Install ceph support
-    echo "Y" | pveceph install
+    echo "Y" | timeout 300 pveceph install || echo "WARNING: pveceph install may require manual confirmation"
 fi
 
 if [ "${XS_LYNIS,,}" == "yes" ] ; then
@@ -478,7 +526,7 @@ if [ "${XS_LYNIS,,}" == "yes" ] ; then
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install lynis
 fi
 
-if [ "${XS_OPENVSWITCH,,}" == "yes" ] && [ "${XS_IFUPDOWN2}" == "no" ] ; then
+if [ "${XS_OPENVSWITCH,,}" == "yes" ] && [ "${XS_IFUPDOWN2,,}" == "no" ] ; then
     ## Install openvswitch for a virtual internal network
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install ifenslave ifupdown
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' remove ifupdown2
@@ -540,8 +588,8 @@ if [ "${XS_KSMTUNED,,}" == "yes" ] ; then
         KSM_THRES_COEF=10
         KSM_SLEEP_MSEC=10
     fi
-    sed -i -e "s/\# KSM_THRES_COEF=.*/KSM_THRES_COEF=${KSM_THRES_COEF}/g" /etc/ksmtuned.conf
-    sed -i -e "s/\# KSM_SLEEP_MSEC=.*/KSM_SLEEP_MSEC=${KSM_SLEEP_MSEC}/g" /etc/ksmtuned.conf
+    sed -i -e "s/^#\?\s*KSM_THRES_COEF=.*/KSM_THRES_COEF=${KSM_THRES_COEF}/g" /etc/ksmtuned.conf
+    sed -i -e "s/^#\?\s*KSM_SLEEP_MSEC=.*/KSM_SLEEP_MSEC=${KSM_SLEEP_MSEC}/g" /etc/ksmtuned.conf
     systemctl enable ksmtuned
 fi
 
@@ -557,11 +605,8 @@ if [ "${XS_AMDFIXES,,}" == "yes" ] ; then
 
     if [ "${XS_AMDFIXES,,}" == "yes" ] ; then
       #Apply fix to kernel : Fixes random crashing and instability
-        if ! grep "GRUB_CMDLINE_LINUX_DEFAULT" /etc/default/grub | grep -q "idle=nomwait" ; then
-            echo "Setting kernel idle=nomwait"
-            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="idle=nomwait /g' /etc/default/grub
-            update-grub
-        fi
+        echo "Setting kernel idle=nomwait"
+        add_grub_cmdline_param "idle=nomwait"
         ## Add msrs ignore to fix Windows guest on EPYC/Ryzen host
         append_if_not_exists "/etc/modprobe.d/kvm.conf" "options kvm ignore_msrs=Y"
         append_if_not_exists "/etc/modprobe.d/kvm.conf" "options kvm report_ignored_msrs=N"
@@ -627,32 +672,10 @@ if [ "${XS_TIMEZONE}" == "" ] ; then
     if [ "$this_ip" == "" ] ; then
         this_ip="$(curl -fsSL --max-time 10 --retry 3 --retry-delay 1 "$XS_IPINFO_URL" 2>/dev/null || true)"
     fi
-    # Validate IP address format (IPv4 or IPv6)
-    is_valid_ip() {
-        local ip="$1"
-        # IPv4 validation
-        if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-            local IFS='.'
-            # shellcheck disable=SC2206
-            local octets=($ip)
-            for octet in "${octets[@]}"; do
-                if [ "$octet" -gt 255 ]; then
-                    return 1
-                fi
-            done
-            return 0
-        fi
-        # IPv6 validation (simplified - accepts valid formats)
-        if [[ "$ip" =~ ^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$ ]] || \
-           [[ "$ip" =~ ^::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$ ]] || \
-           [[ "$ip" =~ ^([0-9a-fA-F]{1,4}:){1,6}:$ ]]; then
-            return 0
-        fi
-        return 1
-    }
     if [ "$this_ip" != "" ] && is_valid_ip "$this_ip"; then
         timezone="$(curl -fsSL --max-time 10 --retry 3 --retry-delay 1 "${XS_IPAPI_URL}/${this_ip}/timezone" 2>/dev/null || true)"
-        if [ "$timezone" != "" ] ; then
+        # Validate timezone format (IANA timezone pattern, e.g. America/New_York, UTC)
+        if [[ "$timezone" =~ ^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$ ]]; then
             echo "Found $timezone for ${this_ip}"
             timedatectl set-timezone "$timezone"
         else
@@ -701,17 +724,17 @@ if [ "${XS_PIGZ,,}" == "yes" ] ; then
     ## Set pigz to replace gzip, 2x faster gzip compression
     sed -i "s/#pigz:.*/pigz: 1/" /etc/vzdump.conf
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install pigz
-    cat  <<EOF > /bin/pigzwrapper
+    # Use dpkg-divert to properly divert system gzip (survives package upgrades)
+    if ! dpkg-divert --list /usr/bin/gzip 2>/dev/null | grep -q divert; then
+        dpkg-divert --divert /usr/bin/gzip.distrib --rename --add /usr/bin/gzip
+    fi
+    cat <<'EOF' > /usr/bin/gzip
 #!/bin/sh
-# ashimov.com
-PATH=/bin:\$PATH
-GZIP="-1"
-exec /usr/bin/pigz "\$@"
+# ashimov.com - pigz wrapper for parallel gzip
+PATH=/bin:$PATH
+exec /usr/bin/pigz -1 "$@"
 EOF
-    mv -f /bin/gzip /bin/gzip.original
-    cp -f /bin/pigzwrapper /bin/gzip
-    chmod +x /bin/pigzwrapper
-    chmod +x /bin/gzip
+    chmod +x /usr/bin/gzip
 fi
 
 if [ "${XS_OVHRTM,,}" == "yes" ] ; then
@@ -792,14 +815,14 @@ if [ "${XS_NOSUBBANNER,,}" == "yes" ] ; then
   cat <<'EOF' > /etc/cron.daily/xs-pve-nosub
 #!/bin/sh
 # ashimov.com Remove subscription banner
-sed -i "s/data.status !== 'Active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-sed -i "s/checked_command: function(orig_cmd) {/checked_command: function() {} || function(orig_cmd) {/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+sed -i '/data.status/{s/\!//;s/Active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
 EOF
       chmod 755 /etc/cron.daily/xs-pve-nosub
       bash /etc/cron.daily/xs-pve-nosub
     fi
     # Remove nag @tinof
-    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/Active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" > /etc/apt/apt.conf.d/xs-pve-no-nag && apt --reinstall install proxmox-widget-toolkit
+    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/Active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" > /etc/apt/apt.conf.d/xs-pve-no-nag
+    apt --reinstall install proxmox-widget-toolkit || echo "WARNING: Failed to reinstall proxmox-widget-toolkit for nag removal"
 fi
 
 if [ "${XS_MOTD,,}" == "yes" ] ; then
@@ -887,7 +910,8 @@ copytruncate
 
 include /etc/logrotate.d
 EOF
-    systemctl restart logrotate
+    # logrotate is not a daemon; config takes effect on next scheduled run
+    logrotate --debug /etc/logrotate.conf > /dev/null 2>&1 || echo "WARNING: logrotate config validation failed"
 fi
 
 if [ "${XS_JOURNALD,,}" == "yes" ] ; then
@@ -914,7 +938,7 @@ Compress=yes
 SystemMaxUse=64M
 RuntimeMaxUse=60M
 # Optimise the logging and speed up tasks
-MaxLevelStore=warning
+MaxLevelStore=info
 MaxLevelSyslog=warning
 MaxLevelKMsg=warning
 MaxLevelConsole=notice
@@ -927,6 +951,7 @@ fi
 
 if [ "${XS_ENTROPY,,}" == "yes" ] ; then
 ## Ensure Entropy Pools are Populated, prevents slowdowns whilst waiting for entropy
+## Note: On kernel 6.x+ (Proxmox 8/9), the built-in CRNG is sufficient; haveged is optional
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install haveged
     ## Net optimising
     cat <<EOF > /etc/default/haveged
@@ -1073,19 +1098,20 @@ if [ "${XS_ZFSARC,,}" == "yes" ] ; then
     ## Optimise ZFS arc size accoring to memory size
     if [ "$(command -v zfs)" != "" ] ; then
       if [[ $RAM_SIZE_GB -le 16 ]] ; then
-        MY_ZFS_ARC_MIN=536870911
+        # 256MB MIN / 512MB MAX for small memory systems
+        MY_ZFS_ARC_MIN=268435456
         MY_ZFS_ARC_MAX=536870912
     elif [[ $RAM_SIZE_GB -le 32 ]] ; then
-        # 1GB/1GB
-        MY_ZFS_ARC_MIN=1073741823
+        # 512MB MIN / 1GB MAX
+        MY_ZFS_ARC_MIN=536870912
         MY_ZFS_ARC_MAX=1073741824
       else
         MY_ZFS_ARC_MIN=$((RAM_SIZE_GB * 1073741824 / 16))
         MY_ZFS_ARC_MAX=$((RAM_SIZE_GB * 1073741824 / 8))
       fi
       # Enforce the minimum, incase of a faulty vmstat
-      if [[ $MY_ZFS_ARC_MIN -lt 536870911 ]] ; then
-        MY_ZFS_ARC_MIN=536870911
+      if [[ $MY_ZFS_ARC_MIN -lt 268435456 ]] ; then
+        MY_ZFS_ARC_MIN=268435456
       fi
       if [[ $MY_ZFS_ARC_MAX -lt 536870912 ]] ; then
         MY_ZFS_ARC_MAX=536870912
@@ -1119,22 +1145,11 @@ fi
 
 if [ "${XS_VFIO_IOMMU,,}" == "yes" ] ; then
     # Enable IOMMU
-    cpu=$(cat /proc/cpuinfo)
-    add_grub_cmdline_param() {
-        local param="$1"
-        if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
-            if ! grep -qF "$param" /etc/default/grub; then
-                sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=\")([^\"]*)\"/\\1\\2 ${param}\"/" /etc/default/grub
-            fi
-        else
-            echo "GRUB_CMDLINE_LINUX_DEFAULT=\"${param}\"" >> /etc/default/grub
-        fi
-    }
-    if [[ $cpu == *"GenuineIntel"* ]]; then
+    if grep -q "GenuineIntel" /proc/cpuinfo; then
         echo "Detected Intel CPU"
         add_grub_cmdline_param "intel_iommu=on"
         add_grub_cmdline_param "iommu=pt"
-    elif [[ $cpu == *"AuthenticAMD"* ]]; then
+    elif grep -q "AuthenticAMD" /proc/cpuinfo; then
         echo "Detected AMD CPU"
         add_grub_cmdline_param "amd_iommu=on"
         add_grub_cmdline_param "iommu=pt"
@@ -1144,7 +1159,7 @@ if [ "${XS_VFIO_IOMMU,,}" == "yes" ] ; then
 
     # Add VFIO modules
     # Note: vfio_virqfd merged into vfio module in kernel 6.2+ (Proxmox 8+)
-    if ! grep -qF "# ashimov.com" /etc/modules 2>/dev/null || ! grep -qF "vfio" /etc/modules 2>/dev/null; then
+    if ! grep -qF "# ashimov.com" /etc/modules 2>/dev/null && ! grep -qF "vfio" /etc/modules 2>/dev/null; then
         KERNEL_MAJOR=$(uname -r | cut -d. -f1)
         KERNEL_MINOR=$(uname -r | cut -d. -f2)
         # Validate kernel version is numeric
@@ -1175,7 +1190,7 @@ EOF
     fi
 
     # Add GPU blacklist for VFIO passthrough
-    if ! grep -qF "# ashimov.com" /etc/modprobe.d/blacklist.conf 2>/dev/null || ! grep -qF "blacklist nouveau" /etc/modprobe.d/blacklist.conf 2>/dev/null; then
+    if ! grep -qF "# ashimov.com" /etc/modprobe.d/blacklist.conf 2>/dev/null && ! grep -qF "blacklist nouveau" /etc/modprobe.d/blacklist.conf 2>/dev/null; then
         cat <<EOF >> /etc/modprobe.d/blacklist.conf
 # ashimov.com
 blacklist nouveau
@@ -1191,10 +1206,17 @@ EOF
 
 fi
 
+# Apply sysctl settings immediately (without requiring reboot)
+sysctl --system > /dev/null 2>&1 || echo "WARNING: Some sysctl settings could not be applied immediately"
+
 # propagate the settings
 update-initramfs -u -k all
-update-grub
-pve-efiboot-tool refresh
+if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then
+    update-grub
+fi
+if command -v pve-efiboot-tool >/dev/null 2>&1 && [ -d /sys/firmware/efi ]; then
+    pve-efiboot-tool refresh || echo "WARNING: pve-efiboot-tool refresh failed (may not apply to this system)"
+fi
 
 # cleanup
 ## Remove no longer required packages and purge old cached updates

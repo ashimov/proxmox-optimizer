@@ -25,8 +25,7 @@ iface {{ proxmox_bridge_name }} inet static
 {% if proxmox_ipv6_address | length > 0 and proxmox_ipv6_gateway | length > 0 %}
 ### IPv6 ###
 iface {{ proxmox_bridge_name }} inet6 static
-  address {{ proxmox_ipv6_address }}
-  netmask {{ proxmox_ipv6_netmask }}
+  address {{ proxmox_ipv6_address }}/{{ proxmox_ipv6_netmask }}
   gateway {{ proxmox_ipv6_gateway }}
 {% endif %}
 

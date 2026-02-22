@@ -30,7 +30,7 @@
 # 2 Drives = mirror
 # 3-5 Drives = raidz-1
 # 6-11 Drives = raidz-2
-# 11+ Drives = raidz-3
+# 12+ Drives = raidz-3
 #
 # NOTE: WILL  DESTROY ALL DATA ON DEVICES SPECIFED
 #
@@ -95,6 +95,10 @@ if [[ "$poolname" =~ "/" ]] ; then
   echo "ERROR: invalid poolname: $poolname"
   exit 1
 fi
+if [[ ! "$poolname" =~ ^[a-zA-Z][a-zA-Z0-9_:.-]*$ ]]; then
+  echo "ERROR: Pool name '$poolname' contains invalid characters"
+  exit 1
+fi
 if [ "${#zfsdevicearray[@]}" -lt "1" ] ; then
   echo "ERROR: less than 1 devices were detected"
   exit 1
@@ -128,12 +132,17 @@ for zfsdevice in "${zfsdevicearray[@]}" ; do
       fi
     fi
   fi
-  if grep -q "$zfsdevice" "/proc/mounts" ; then
+  resolved_dev=$(readlink -f "$zfsdevice")
+  if [ -z "$resolved_dev" ]; then
+    echo "ERROR: Cannot resolve device path for $zfsdevice"
+    exit 1
+  fi
+  if grep -qw "$resolved_dev" "/proc/mounts" ; then
     echo "ERROR: Device is mounted $zfsdevice"
     exit 1
   fi
   echo "Clearing partitions: ${zfsdevice}"
-  for v_partition in $(parted -s "${zfsdevice}" print|awk '/^ / {print $1}') ; do
+  for v_partition in $(parted -s "${zfsdevice}" print 2>/dev/null | awk '/^ / {print $1}' || true) ; do
     run_cmd parted -s "${zfsdevice}" rm "${v_partition}" 2> /dev/null
   done
 
@@ -160,7 +169,7 @@ for zfsdevice in "${zfsdevicearray[@]}" ; do
       echo "WARNING: Unable to resolve ${zfsdevice} to /dev/disk/by-id; using original path"
     fi
   fi
-  ((INDEX++))
+  INDEX=$((INDEX + 1))
 done
 
 echo "Enable ZFS to autostart and mount"
@@ -182,56 +191,52 @@ if [ "${ZFS_DRYRUN,,}" != "yes" ]; then
   fi
 fi
 
-if [ "$(zpool import 2> /dev/null | grep -m 1 -o "\\s$poolname\\b")" == "$poolname" ] ; then
+importable_pools=$(zpool import 2>/dev/null || true)
+if echo "$importable_pools" | grep -qw "$poolname"; then
   echo "ERROR: $poolname already exists as an exported pool"
-  zpool import
+  echo "$importable_pools"
   exit 1
 fi
-if [ "$(zpool list 2> /dev/null | grep -m 1 -o "\\s$poolname\\b")" == "$poolname" ] ; then
+if zpool list -H -o name 2>/dev/null | grep -qx "$poolname"; then
   echo "ERROR: $poolname already exists as a listed pool"
   zpool list
   exit 1
 fi
 
 echo "Creating the array"
-ret=1  # Initialize to error state
+ret=0
 if [ "${#zfsdevicearray[@]}" -eq "1" ] ; then
   echo "Creating ZFS single"
-  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" "${zfsdevicearray[@]}"
-  ret=$?
+  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" "${zfsdevicearray[@]}" || ret=$?
 elif [ "${#zfsdevicearray[@]}" -eq "2" ] ; then
   echo "Creating ZFS mirror (raid1)"
-  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" mirror "${zfsdevicearray[@]}"
-  ret=$?
+  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" mirror "${zfsdevicearray[@]}" || ret=$?
 elif [ "${#zfsdevicearray[@]}" -ge "3" ] && [ "${#zfsdevicearray[@]}" -le "5" ] ; then
   echo "Creating ZFS raidz-1 (raid5)"
-  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" raidz "${zfsdevicearray[@]}"
-  ret=$?
-elif [ "${#zfsdevicearray[@]}" -ge "6" ] && [ "${#zfsdevicearray[@]}" -lt "11" ] ; then
+  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" raidz "${zfsdevicearray[@]}" || ret=$?
+elif [ "${#zfsdevicearray[@]}" -ge "6" ] && [ "${#zfsdevicearray[@]}" -le "11" ] ; then
   echo "Creating ZFS raidz-2 (raid6)"
-  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" raidz2 "${zfsdevicearray[@]}"
-  ret=$?
-elif [ "${#zfsdevicearray[@]}" -ge "11" ] ; then
+  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" raidz2 "${zfsdevicearray[@]}" || ret=$?
+elif [ "${#zfsdevicearray[@]}" -ge "12" ] ; then
   echo "Creating ZFS raidz-3 (raid7)"
-  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" raidz3 "${zfsdevicearray[@]}"
-  ret=$?
+  run_cmd zpool create -f -o ashift=12 -O compression=lz4 -O checksum=on "$poolname" raidz3 "${zfsdevicearray[@]}" || ret=$?
 else
   echo "ERROR: No valid disk configuration (0 devices found)"
   exit 1
 fi
 
-if [ $ret != 0 ] ; then
-  echo "ERROR: creating ZFS"
+if [ "$ret" != 0 ] ; then
+  echo "ERROR: creating ZFS (exit code: $ret)"
   exit 1
 fi
 
 if [ "${ZFS_DRYRUN,,}" == "yes" ] ; then
   echo "DRY-RUN: createzfs completed without changes"
-  exit 1
+  exit 0
 fi
 
-if [ "$( zpool list | grep  "$poolname" | cut -f 1 -d " ")" != "$poolname" ] ; then
-  echo "ERROR: $poolname pool not found"
+if ! zpool list -H -o name 2>/dev/null | grep -qx "$poolname"; then
+  echo "ERROR: $poolname pool not found after creation"
   zpool list
   exit 1
 fi

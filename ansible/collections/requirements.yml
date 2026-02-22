@@ -1,4 +1,8 @@
 ---
 collections:
   - name: ansible.utils
+    version: ">=2.10.0"
   - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.general
+    version: ">=7.0.0"

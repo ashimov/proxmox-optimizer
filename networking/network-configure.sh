@@ -137,7 +137,7 @@ if [ "$default_v4mask" == "$default_v4ip" ] ; then
   fi
   default_v4netmask="$(ifconfig "$default_ip_interface" | awk '/netmask/ { print $4 }')"
 else
-  if [ "$default_v4mask" -lt "1" ] || [ "$default_v4mask" -gt "32" ] ; then
+  if ! [[ "$default_v4mask" =~ ^[0-9]+$ ]] || [ "$default_v4mask" -lt "1" ] || [ "$default_v4mask" -gt "32" ] ; then
     echo "ERROR: Invalid CIDR $default_v4mask"
     exit 1
   fi
@@ -152,6 +152,10 @@ else
     if [[ "$1" -gt 1 ]] ; then shift "$1" ; else shift ; fi ; echo "${1-0}.${2-0}.${3-0}.${4-0}"
   }
   default_v4netmask="$(cdr2mask "$default_v4mask")"
+  if [ "$default_v4netmask" == "0.0.0.0" ]; then
+    echo "ERROR: Netmask conversion failed for CIDR /${default_v4mask}"
+    exit 1
+  fi
 fi
 
 # Validate detected values

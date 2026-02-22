@@ -1,3 +1,4 @@
+---
 - name: Validate networking variables
   ansible.builtin.assert:
     that:
@@ -52,9 +53,12 @@
     content: |
       #!/usr/bin/env bash
       # Managed by Ansible: extra routes
-      set -e
       {% for route in proxmox_extra_routes %}
-      ip route replace {{ route.cidr | ansible.utils.ipaddr('network') }}/{{ route.cidr | ansible.utils.ipaddr('prefix') }} dev {{ route.interface | default(proxmox_bridge_name) }}
+      {% set net = route.cidr | ansible.utils.ipaddr('network') %}
+      {% set pfx = route.cidr | ansible.utils.ipaddr('prefix') %}
+      {% set dev = route.interface | default(proxmox_bridge_name) %}
+      ip route replace {{ net }}/{{ pfx }} dev {{ dev }} \
+        || echo "Warning: failed to add route {{ route.cidr }}"
       {% endfor %}
     owner: root
     group: root

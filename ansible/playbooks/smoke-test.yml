@@ -7,7 +7,7 @@
   hosts: proxmox
   become: true
   gather_facts: true
-  
+
   vars:
     # Override dangerous operations for smoke test
     xs_aptupgrade: "no"
@@ -15,13 +15,13 @@
     xs_zfsautosnapshot: "no"
     xs_vfio_iommu: "no"
     proxmox_configure_networking: "no"
-  
+
   tasks:
     - name: Verify Proxmox installation
       ansible.builtin.stat:
         path: /etc/pve/.version
       register: pve_version_file
-      
+
     - name: Assert Proxmox is installed
       ansible.builtin.assert:
         that:
@@ -33,7 +33,7 @@
       ansible.builtin.command: pveversion
       register: pve_version
       changed_when: false
-      
+
     - name: Display Proxmox version
       ansible.builtin.debug:
         msg: "Proxmox version: {{ pve_version.stdout }}"
@@ -41,7 +41,7 @@
     - name: Verify OS codename
       ansible.builtin.set_fact:
         proxmox_os_codename: "{{ ansible_lsb.codename | default(ansible_distribution_release) }}"
-        
+
     - name: Assert valid OS codename
       ansible.builtin.assert:
         that:
@@ -53,7 +53,7 @@
       ansible.builtin.stat:
         path: /etc/apt/sources.list
       register: apt_sources
-      
+
     - name: Assert APT sources exist
       ansible.builtin.assert:
         that:
@@ -65,7 +65,7 @@
       ansible.builtin.stat:
         path: /etc/network/interfaces
       register: network_interfaces
-      
+
     - name: Assert network interfaces exist
       ansible.builtin.assert:
         that:
@@ -78,7 +78,7 @@
       register: zfs_check
       changed_when: false
       failed_when: false
-      
+
     - name: Display ZFS status
       ansible.builtin.debug:
         msg: "ZFS is {{ 'available' if zfs_check.rc == 0 else 'not available' }}"
@@ -86,7 +86,7 @@
     - name: Check CPU vendor
       ansible.builtin.set_fact:
         cpu_vendor: "{{ 'Intel' if 'GenuineIntel' in (ansible_facts['processor'] | join(' ')) else 'AMD' if 'AuthenticAMD' in (ansible_facts['processor'] | join(' ')) else 'Unknown' }}"
-        
+
     - name: Display CPU vendor
       ansible.builtin.debug:
         msg: "CPU vendor: {{ cpu_vendor }}"

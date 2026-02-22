@@ -1,3 +1,4 @@
+---
 # proxmox_lxc_docker role defaults
 # ============================================================================
 # WARNING: Running Docker inside LXC containers requires elevated privileges
@@ -16,8 +17,8 @@ lxc_docker_confirm: false
 lxc_docker_config_lines:
   - "lxc.apparmor.profile: unconfined"
   - "lxc.cgroup.devices.allow: a"
+  - "lxc.cgroup2.devices.allow: a"
   - "lxc.cap.drop:"
-  - "linux.kernel_modules: aufs ip_tables"
   - "lxc.mount.auto: proc:rw sys:rw"
 
 # Whether to restart the container after configuration

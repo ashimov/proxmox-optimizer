@@ -1,3 +1,4 @@
+---
 - name: Set RAM size fact
   ansible.builtin.set_fact:
     ram_size_gb: "{{ (ansible_memtotal_mb / 1024) | int }}"
@@ -10,8 +11,8 @@
 
 - name: Set KSM tuning values
   ansible.builtin.set_fact:
-    ksm_thres_coef: "{{ 50 if ram_size_gb <= 16 else 40 if ram_size_gb <= 32 else 30 if ram_size_gb <= 64 else 20 if ram_size_gb <= 128 else 10 }}"
-    ksm_sleep_msec: "{{ 80 if ram_size_gb <= 16 else 60 if ram_size_gb <= 32 else 40 if ram_size_gb <= 64 else 20 if ram_size_gb <= 128 else 10 }}"
+    ksm_thres_coef: "{{ 50 if ram_size_gb | int <= 16 else 40 if ram_size_gb | int <= 32 else 30 if ram_size_gb | int <= 64 else 20 if ram_size_gb | int <= 128 else 10 }}"
+    ksm_sleep_msec: "{{ 80 if ram_size_gb | int <= 16 else 60 if ram_size_gb | int <= 32 else 40 if ram_size_gb | int <= 64 else 20 if ram_size_gb | int <= 128 else 10 }}"
   when: xs_ksmtuned | lower == "yes"
 
 - name: Configure KSM tuning
@@ -54,7 +55,7 @@
     line: 'GRUB_CMDLINE_LINUX_DEFAULT=""'
     insertafter: EOF
     create: yes
-  when: xs_amdfixes | lower == "yes" and amd_detected and grub_cmdline_check.rc != 0
+  when: xs_amdfixes | lower == "yes" and amd_detected and (grub_cmdline_check.rc | default(0)) != 0
 
 - name: Ensure idle=nomwait in GRUB cmdline
   ansible.builtin.replace:
@@ -88,7 +89,7 @@
 
 - name: Select AMD kernel package
   ansible.builtin.set_fact:
-    amd_kernel_package: "{{ 'pve-kernel-6.11' if proxmox_pve_major >= 9 else ('pve-kernel-6.8' if proxmox_pve_major >= 8 else 'pve-kernel-5.15') }}"
+    amd_kernel_package: "{{ 'pve-kernel-6.11' if proxmox_pve_major | int >= 9 else ('pve-kernel-6.8' if proxmox_pve_major | int >= 8 else 'pve-kernel-5.15') }}"
   when: xs_amdfixes | lower == "yes" and amd_detected
 
 - name: Install AMD kernel package
@@ -241,7 +242,7 @@
     group: root
     mode: "0644"
   when: xs_logrotate | lower == "yes"
-  notify: Restart logrotate
+  notify: Validate logrotate config
 
 - name: Configure journald
   ansible.builtin.copy:
@@ -260,7 +261,7 @@
       Compress=yes
       SystemMaxUse=64M
       RuntimeMaxUse=60M
-      MaxLevelStore=warning
+      MaxLevelStore=info
       MaxLevelSyslog=warning
       MaxLevelKMsg=warning
       MaxLevelConsole=notice
@@ -532,23 +533,31 @@
   register: proxmoxlib_file
   when: xs_nosubbanner | lower == "yes"
 
-- name: Create subscription banner removal cron script
+- name: Create subscription banner removal script
   ansible.builtin.copy:
     dest: /etc/cron.daily/xs-pve-nosub
     content: |
       #!/bin/sh
       # ashimov.com Remove subscription banner
-      sed -i "s/data.status !== 'Active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-      sed -i "s/checked_command: function(orig_cmd) {/checked_command: function() {} || function(orig_cmd) {/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+      sed -i '/data.status/{s/\!//;s/Active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
     owner: root
     group: root
     mode: "0755"
   when: xs_nosubbanner | lower == "yes" and proxmoxlib_file.stat.exists | default(false)
 
+- name: Check if subscription banner already removed
+  ansible.builtin.command: grep -q "data.status !== 'Active'" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+  register: banner_check
+  changed_when: false
+  failed_when: false
+  when: xs_nosubbanner | lower == "yes" and proxmoxlib_file.stat.exists | default(false)
+
 - name: Run subscription banner removal
   ansible.builtin.command: /etc/cron.daily/xs-pve-nosub
-  when: xs_nosubbanner | lower == "yes" and proxmoxlib_file.stat.exists | default(false)
-  changed_when: false
+  when:
+    - xs_nosubbanner | lower == "yes" and proxmoxlib_file.stat.exists | default(false)
+    - banner_check.rc == 0
+  changed_when: true
 
 - name: Create APT hook for subscription nag removal
   ansible.builtin.copy:
@@ -584,8 +593,7 @@
       #!/bin/sh
       # ashimov.com
       PATH=/bin:$PATH
-      GZIP="-1"
-      exec /usr/bin/pigz "$@"
+      exec /usr/bin/pigz -1 "$@"
     owner: root
     group: root
     mode: "0755"
@@ -601,7 +609,7 @@
   ansible.builtin.command: mv -f /bin/gzip /bin/gzip.original
   args:
     creates: /bin/gzip.original
-  when: xs_pigz | lower == "yes" and not gzip_original.stat.exists | default(true)
+  when: xs_pigz | lower == "yes" and not (gzip_original.stat.exists | default(false))
   changed_when: true
 
 - name: Replace gzip with pigz wrapper
@@ -621,7 +629,6 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK - ashimov.com"
     block: |
       export HISTTIMEFORMAT="%d/%m/%y %T "
-      export PS1='\u@\h:\W \$ '
       alias l='ls -CF'
       alias la='ls -A'
       alias ll='ls -alF'
@@ -661,6 +668,12 @@
   changed_when: true
 
 # Automatic timezone detection by IP
+- name: Get current timezone for comparison
+  ansible.builtin.command: timedatectl show --property=Timezone --value
+  register: tuning_current_timezone
+  changed_when: false
+  when: xs_timesync | lower == "yes" and (xs_timezone is not defined or xs_timezone | length == 0)
+
 - name: Get public IP for timezone detection
   ansible.builtin.uri:
     url: https://ipapi.co/timezone
@@ -678,7 +691,9 @@
     - timezone_result.content is defined
     - timezone_result.content | length > 0
     - timezone_result.status == 200
-  changed_when: false
+    - timezone_result.content is regex('^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$')
+    - tuning_current_timezone.stdout | default('') != timezone_result.content
+  changed_when: true
 
 - name: Set timezone to UTC if detection failed
   ansible.builtin.command: timedatectl set-timezone UTC
@@ -686,7 +701,8 @@
     - xs_timesync | lower == "yes"
     - xs_timezone is not defined or xs_timezone | length == 0
     - timezone_result.status is not defined or timezone_result.status != 200
-  changed_when: false
+    - tuning_current_timezone.stdout | default('') != 'UTC'
+  changed_when: true
 
 # Journald vacuum and rotate
 - name: Vacuum journald logs

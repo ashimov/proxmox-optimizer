@@ -29,6 +29,9 @@
 #
 ##############################################################
 
+set -e
+set -o pipefail
+
 # Set the local
 export LANG="en_US.UTF-8"
 export LC_ALL="C"
@@ -118,8 +121,8 @@ if [ -f "$container_config" ]; then
 
   addlineifnotfound "$container_config" "lxc.apparmor.profile: unconfined"
   addlineifnotfound "$container_config" "lxc.cgroup.devices.allow: a"
+  addlineifnotfound "$container_config" "lxc.cgroup2.devices.allow: a"
   addlineifnotfound "$container_config" "lxc.cap.drop:"
-  addlineifnotfound "$container_config" "linux.kernel_modules: aufs ip_tables"
   addlineifnotfound "$container_config" "lxc.mount.auto: proc:rw sys:rw"
 
   #pve is missing the lxc binary
@@ -127,9 +130,9 @@ if [ -f "$container_config" ]; then
   #lxc config set "$container_id" security.privileged true
   #lxc restart "$container_id"
 
-  #pve lxc container restart
-  lxc-stop --name "$container_id"
-  lxc-start --name "$container_id"
+  #pve lxc container restart (use Proxmox native pct commands)
+  pct stop "$container_id"
+  pct start "$container_id"
 
   echo "Docker support added to $container_id"
 
