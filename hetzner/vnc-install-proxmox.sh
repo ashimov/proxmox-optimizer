@@ -71,6 +71,10 @@ if [ "$OS" == "PVE" ] && [ "$PVE_MAJOR" == "" ] ; then
 fi
 
 MY_IFACE="$(udevadm info -e | grep -m1 -A 20 ^P.*eth0 | grep ID_NET_NAME_PATH | cut -d'=' -f2)"
+if [ -z "$MY_IFACE" ]; then
+  echo "ERROR: Could not detect primary network interface via udevadm"
+  exit 1
+fi
 
 MY_IP4_AND_NETMASK="$(ip address show "${MY_IFACE}" | grep global | grep "inet "| xargs | cut -d" " -f2)"
 
@@ -113,8 +117,8 @@ if [[ $NVME_COUNT -ge 1 ]] ; then
         echo "Appling 4K block size to NVME: ${nvme_device}"
         nvme format "/dev/${nvme_device}" -b 4096 -f || exit 1
         sleep 5
-        echo "Reset NVME controller: ${nvme_device::-2}"
-        nvme reset "/dev/${nvme_device::-2}" || exit 1
+        echo "Reset NVME controller: ${nvme_device%%n[0-9]*}"
+        nvme reset "/dev/${nvme_device%%n[0-9]*}" || exit 1
         sleep 5
       fi
     fi
@@ -144,7 +148,8 @@ SSD_TARGET_FIRST=""
 HDD_TARGET_FIRST=""
 if [[ $SCSI_COUNT -ge 1 ]] ; then
   for scsi_device in "${SCSI_ARRAY[@]}"; do
-    if [ "$(lsblk -d -o rota "/dev/${scsi_device}" | tail -n 1 | xargs)" -ne "1" ] ; then
+    rota_value="$(lsblk -d -o rota "/dev/${scsi_device}" | tail -n 1 | xargs)"
+    if [[ "$rota_value" == "0" ]] || [[ "$rota_value" == "false" ]]; then
       SSD_COUNT=$((SSD_COUNT+1))
       if [ "${SSD_TARGET}" == "" ] ; then
         SSD_TARGET="${scsi_device}"
@@ -188,7 +193,7 @@ elif [[ $NVME_TARGET_COUNT -eq 0 ]] && [[ $SSD_TARGET_COUNT -ge 1 ]] && [[ $HDD_
 #HDD Only
 elif [[ $NVME_TARGET_COUNT -eq 0 ]] && [[ $SSD_TARGET_COUNT -eq 0 ]] && [[ $HDD_TARGET_COUNT -ge 1 ]] ; then
   INSTALL_TARGET="${HDD_TARGET}"
-  INSTALL_COUNT=$SSD_TARGET_COUNT
+  INSTALL_COUNT=$HDD_TARGET_COUNT
 #NVME with SSD, OS on SSD
 elif [[ $NVME_TARGET_COUNT -ge 1 ]] && [[ $SSD_TARGET_COUNT -ge 1 ]] && [[ $HDD_TARGET_COUNT -eq 0 ]] ; then
   INSTALL_TARGET="${SSD_TARGET}"
@@ -211,15 +216,21 @@ fi
 # Generate DISK config for VM
 #alpha=({a..z})
 #yc=0
+if [ -z "${INSTALL_TARGET}" ]; then
+  echo "ERROR: No suitable install target detected"
+  echo "NVME_COUNT: ${NVME_COUNT}, SSD_COUNT: ${SSD_COUNT}, HDD_COUNT: ${HDD_COUNT}"
+  exit 1
+fi
+
 IFS=', ' read -r -a INSTALL_TARGET_ARRAY <<< "${INSTALL_TARGET}"
 DISKS=""
 for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
   if [ "${INSTALL_NVME,,}" == "yes" ]; then
     install_device_serial="$(nvme id-ctrl "/dev/${install_device}" | grep "^sn" | xargs | cut -d":" -f 2 | xargs)"
     if [ "$install_device_serial" != "" ] ; then
-      DISKS="${DISKS} -device nvme,drive=${install_device::-2},serial=${install_device_serial} -drive file=/dev/${install_device},format=raw,if=none,id=${install_device::-2}"
+      DISKS="${DISKS} -device nvme,drive=${install_device%%n[0-9]*},serial=${install_device_serial} -drive file=/dev/${install_device},format=raw,if=none,id=${install_device%%n[0-9]*}"
     else
-      DISKS="${DISKS} -device nvme,drive=${install_device::-2} -drive file=/dev/${install_device},format=raw,if=none,id=${install_device::-2}"
+      DISKS="${DISKS} -device nvme,drive=${install_device%%n[0-9]*} -drive file=/dev/${install_device},format=raw,if=none,id=${install_device%%n[0-9]*}"
     fi
   else
     DISKS="${DISKS} -drive file=/dev/${install_device},format=raw,media=disk,if=virtio"
@@ -278,13 +289,12 @@ echo "********************************"
 
 echo ">> CONNECT VIA VNC TO ${MY_IP4_AND_NETMASK%/*} WITH PASSWORD ${MY_RANDOM_PASS}"
 
-printf "change vnc password\n%s\n" ${MY_RANDOM_PASS} | qemu-system-x86_64 -machine type=q35,accel=kvm -cpu host -enable-kvm -smp 4 -m 4096 -boot d -cdrom ${INSTALL_IMAGE} ${DISKS} -vnc :0,password -monitor stdio -no-reboot
+# shellcheck disable=SC2086 # DISKS is intentionally unquoted - contains multiple space-separated QEMU arguments
+printf "change vnc password\n%s\n" "${MY_RANDOM_PASS}" | qemu-system-x86_64 -machine type=q35,accel=kvm -cpu host -enable-kvm -smp 4 -m 4096 -boot d -cdrom "${INSTALL_IMAGE}" ${DISKS} -vnc :0,password -monitor stdio -no-reboot
 
 #https://blogs.oracle.com/linux/post/how-to-emulate-block-devices-with-qemu
 
-printf "n\n" | zfsonlinux_install 2&> /dev/null
-retVal=$?
-if [ $retVal -eq 1 ]; then
+if command -v zfsonlinux_install >/dev/null 2>&1; then
   echo "Installing zfsonlinux"
   printf "y\n" | zfsonlinux_install
   echo "Correcting network config"
@@ -320,7 +330,8 @@ iface vmbr0 inet static
   echo "export the zfs pool, so the machine will boot correctly "
   echo ">> run the following command below"
   echo "zpool export -f rpool"
-  printf "change vnc password\n%s\n" ${MY_RANDOM_PASS} | qemu-system-x86_64 -enable-kvm -smp 4 -m 4096 $DISKS -vnc :0,password -monitor stdio -no-reboot -serial telnet:localhost:4321,server,nowait
+  # shellcheck disable=SC2086 # DISKS is intentionally unquoted - contains multiple space-separated QEMU arguments
+  printf "change vnc password\n%s\n" "${MY_RANDOM_PASS}" | qemu-system-x86_64 -enable-kvm -smp 4 -m 4096 $DISKS -vnc :0,password -monitor stdio -no-reboot -serial telnet:localhost:4321,server,nowait
 
 fi
 

@@ -3,7 +3,7 @@
 # ============================================================================
 
 - name: Skip if NVIDIA Docker not enabled
-  ansible.builtin.meta: end_play
+  ansible.builtin.meta: end_role
   when: not nvidia_docker_enabled
 
 - name: Ensure gnupg is installed

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-ip route del {{ tinc_vpn_subnet }}.0/{{ tinc_vpn_netmask }} dev $INTERFACE
+ip route del {{ tinc_vpn_subnet }}.0/{{ tinc_vpn_netmask }} dev $INTERFACE 2>/dev/null || true
 ip addr del {{ tinc_vpn_subnet }}.{{ tinc_vpn_ip_last }}/{{ tinc_vpn_netmask }} dev $INTERFACE
 ip link set $INTERFACE down
 
 # Remove multicast route
-route del -net 224.0.0.0 netmask 240.0.0.0 dev $INTERFACE
+route del -net 224.0.0.0 netmask 240.0.0.0 dev $INTERFACE 2>/dev/null || true
 {% if tinc_ip_forwarding %}
 
-# Disable IP forwarding
-echo 0 > /proc/sys/net/ipv4/ip_forward
+# Note: IP forwarding is managed by Proxmox sysctl config; do not disable here
+# as it would break VM/container networking
 {% endif %}

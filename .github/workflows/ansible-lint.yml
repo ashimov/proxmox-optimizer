@@ -1,6 +1,7 @@
+---
 name: ansible-lint
 
-on:
+"on":
   push:
     branches: [master, main]
     paths:
@@ -31,15 +32,17 @@ jobs:
 
       - name: Install ansible-lint
         run: |
-          pip install ansible ansible-lint
+          pip install 'ansible>=9,<11' 'ansible-lint>=24'
 
       - name: Cache Ansible collections
+        id: cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: ~/.ansible/collections
-          key: ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
+          key: ansible-collections-v1-${{ hashFiles('ansible/collections/requirements.yml') }}
 
       - name: Install Ansible collections
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           ansible-galaxy collection install -r ansible/collections/requirements.yml
 

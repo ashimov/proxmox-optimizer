@@ -35,6 +35,12 @@
 set -e
 set -o pipefail
 
+# Require root
+if [ "$(id -u)" -ne 0 ]; then
+  echo "ERROR: This script must be run as root"
+  exit 1
+fi
+
 # Set the local
 export LANG="en_US.UTF-8"
 export LC_ALL="C"
@@ -69,14 +75,14 @@ if [[ ! "$my_hostname" =~ \. ]]; then
 fi
 
 echo "Deinstalling any linux firmware packages"
-firmware="$(dpkg -l | grep -i 'firmware-')"
+firmware="$(dpkg -l | grep -i 'firmware-' || true)"
 if [ -n "$firmware" ]; then
   /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' purge firmware-bnx2x firmware-realtek firmware-linux firmware-linux-free firmware-linux-nonfree
 else
   echo "No firmware packages loaded"
 fi
 
-echo "Deinstalling the Debian standard kernel packages"
+echo "Deinstalling the Debian standard kernel packages (metapackage only)"
 /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' purge linux-image-amd64
 
 echo "Removing conflicting packages"
@@ -85,7 +91,7 @@ echo "Removing conflicting packages"
 apt-get clean all
 
 echo "Auto detecting existing network settings"
-default_interface="$(ip route | awk '/default/ { print $5 }' | grep -v "vmbr")"
+default_interface="$(ip route | awk '/default/ { print $5; exit }' | grep -v "vmbr")"
 if [ "$default_interface" == "" ]; then
   # Filter the interfaces to get the default interface and which is not down and not a virtual bridge
   default_interface="$(ip link | sed -e '/state DOWN / { N; d; }' | sed -e '/veth[0-9].*:/ { N; d; }' | sed -e '/vmbr[0-9].*:/ { N; d; }' | sed -e '/tap[0-9].*:/ { N; d; }' | sed -e '/lo:/ { N; d; }' | head -n 1 | cut -d':' -f 2 | xargs)"
@@ -146,16 +152,16 @@ postfix postfix/protocols          select all
 postfix postfix/recipient_delim    string +
 postfix postfix/rfc1035_violation  boolean false
 EOF
-/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install -y postfix
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::='--force-confdef' install -y postfix
 
 echo "Installing open-iscsi"
-/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install -y open-iscsi
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::='--force-confdef' install -y open-iscsi
 
 echo "Installing proxmox-ve"
-/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install -y proxmox-ve
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::='--force-confdef' install -y proxmox-ve
 
 echo "Remove legacy kernel"
-/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' remove linux-image-amd64 'linux-image-6.1*'
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' remove linux-image-amd64 'linux-image-6.*'
 
 echo "Force grub to update"
 update-grub

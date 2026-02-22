@@ -1,3 +1,4 @@
+---
 - name: Reload sysctl
   ansible.builtin.command: sysctl --system
   register: sysctl_reload
@@ -9,10 +10,10 @@
     name: systemd-journald
     state: restarted
 
-- name: Restart logrotate
-  ansible.builtin.systemd:
-    name: logrotate
-    state: restarted
+- name: Validate logrotate config
+  ansible.builtin.command: logrotate --debug /etc/logrotate.conf
+  changed_when: false
+  failed_when: false
 
 - name: Restart haveged
   ansible.builtin.systemd:
@@ -21,9 +22,13 @@
 
 - name: Update grub
   ansible.builtin.command: update-grub
+  changed_when: true
 
 - name: Refresh EFI boot
   ansible.builtin.command: pve-efiboot-tool refresh
+  changed_when: true
+  failed_when: false
+  when: ansible_facts['efi'] | default(false)
 
 - name: Restart ksmtuned
   ansible.builtin.systemd:

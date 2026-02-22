@@ -19,7 +19,8 @@ rules:
     spaces: 2
     indent-sequences: true
 
-# Only lint ansible/ directory (workflow handles this)
+# Note: ignore is only effective when yamllint is called without explicit paths.
+# CI workflow specifies paths explicitly (ansible/ .github/workflows/).
 ignore: |
   node_modules/
   venv/

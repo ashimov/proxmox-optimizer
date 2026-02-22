@@ -3,11 +3,6 @@
   hosts: all
   gather_facts: false
   tasks:
-    - name: Verify molecule run
-      ansible.builtin.assert:
-        that:
-          - true
-
     - name: Syntax check main playbook
       ansible.builtin.command: ansible-playbook playbooks/proxmox.yml --syntax-check
       args:
@@ -57,7 +52,9 @@
       changed_when: false
 
     - name: Syntax check zfs-slog-cache playbook
-      ansible.builtin.command: ansible-playbook playbooks/zfs-slog-cache.yml --syntax-check
+      ansible.builtin.command: >-
+        ansible-playbook playbooks/zfs-slog-cache.yml --syntax-check
+        -e confirm_destruction=CI_SKIP
       args:
         chdir: "{{ playbook_dir }}/../.."
       changed_when: false

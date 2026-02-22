@@ -9,7 +9,6 @@ driver:
 
 platforms:
   - name: localhost
-    hosts: localhost
     ansible_connection: local
 
 provisioner:
@@ -18,12 +17,10 @@ provisioner:
     converge: converge.yml
     verify: verify.yml
 
-lint: |
-  cd ../..
-  ansible-lint -c ../.ansible-lint playbooks/ roles/
-
 scenario:
   test_sequence:
-    - lint
+    - dependency
+    - destroy
     - converge
     - verify
+    - destroy

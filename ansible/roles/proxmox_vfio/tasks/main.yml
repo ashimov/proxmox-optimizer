@@ -1,3 +1,4 @@
+---
 - name: Set kernel version facts
   ansible.builtin.set_fact:
     kernel_major: "{{ ansible_kernel.split('.')[0] | int }}"
@@ -21,7 +22,7 @@
     line: 'GRUB_CMDLINE_LINUX_DEFAULT=""'
     insertafter: EOF
     create: yes
-  when: xs_vfio_iommu | lower == "yes" and (vfio_is_intel or vfio_is_amd) and grub_cmdline_check.rc != 0
+  when: xs_vfio_iommu | lower == "yes" and (vfio_is_intel or vfio_is_amd) and (grub_cmdline_check.rc | default(0)) != 0
 
 - name: Ensure Intel IOMMU parameters in GRUB cmdline
   ansible.builtin.replace:
@@ -58,7 +59,7 @@
       vfio
       vfio_iommu_type1
       vfio_pci
-      {% if kernel_major < 6 or (kernel_major == 6 and kernel_minor < 2) %}
+      {% if kernel_major | int < 6 or (kernel_major | int == 6 and kernel_minor | int < 2) %}
       vfio_virqfd
       {% endif %}
   when: xs_vfio_iommu | lower == "yes"

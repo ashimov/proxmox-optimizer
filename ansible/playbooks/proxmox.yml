@@ -1,3 +1,4 @@
+---
 - name: Proxmox base configuration
   hosts: proxmox
   become: true

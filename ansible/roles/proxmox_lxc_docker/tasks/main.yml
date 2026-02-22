@@ -74,7 +74,7 @@
   register: lxc_config_changed
 
 - name: Stop container for restart
-  ansible.builtin.command: "lxc-stop --name {{ lxc_docker_container_id }}"
+  ansible.builtin.command: "pct stop {{ lxc_docker_container_id }}"
   when:
     - lxc_docker_restart_container
     - lxc_config_changed.changed
@@ -82,7 +82,7 @@
   failed_when: false
 
 - name: Start container
-  ansible.builtin.command: "lxc-start --name {{ lxc_docker_container_id }}"
+  ansible.builtin.command: "pct start {{ lxc_docker_container_id }}"
   when:
     - lxc_docker_restart_container
     - lxc_config_changed.changed

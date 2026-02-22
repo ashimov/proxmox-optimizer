@@ -33,5 +33,5 @@ else
   echo "WARNING: Installing PVE edge kernel without checksum verification"
 fi
 
-apt install -y "$(pwd)/$PVE_EDGE_KERNEL_DEB"
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y "$(pwd)/$PVE_EDGE_KERNEL_DEB"
 rm -f "$PVE_EDGE_KERNEL_DEB"

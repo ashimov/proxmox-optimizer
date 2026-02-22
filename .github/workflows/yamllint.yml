@@ -1,7 +1,7 @@
 ---
 name: YAML Lint
 
-on:
+"on":
   push:
     branches: [master, main]
     paths:
@@ -40,4 +40,4 @@ jobs:
 
       - name: Run yamllint on Ansible files
         run: |
-          yamllint -c .yamllint.yml ansible/
+          yamllint -c .yamllint.yml ansible/ .github/workflows/

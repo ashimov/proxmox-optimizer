@@ -1,3 +1,4 @@
+---
 xs_utils_packages:
   - axel
   - build-essential
@@ -14,13 +15,10 @@ xs_utils_packages:
   - iperf
   - ipset
   - iptraf
-  - mlocate
+  - plocate
   - msr-tools
   - nano
   - net-tools
-  - omping
-  - software-properties-common
-  - sshpass
   - tmux
   - unzip
   - vim
@@ -46,6 +44,9 @@ xs_manage_sources_list: "yes"
 # Proxmox GPG key checksums (SHA256)
 # These should be verified from Proxmox official sources
 # Set to empty string to skip checksum validation (not recommended)
+# Default repo key path (set dynamically in tasks based on OS codename)
+proxmox_repo_key_path: "/etc/apt/keyrings/proxmox-release-bookworm.gpg"
+
 proxmox_key_checksums:
   bookworm: "sha256:7da6fe34168adc6e479327ba517796d4702fa2f8b4f0a9833f5ea6e6b48f6507"
   # TODO: Update with real checksum when Proxmox VE 9 (Trixie) is released

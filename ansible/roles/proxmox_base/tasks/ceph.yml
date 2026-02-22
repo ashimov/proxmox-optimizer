@@ -24,9 +24,21 @@
   ansible.builtin.apt:
     update_cache: true
 
+- name: Check if Ceph is already installed
+  ansible.builtin.stat:
+    path: /usr/bin/ceph
+  register: ceph_binary
+
 - name: Install Ceph packages
-  ansible.builtin.command: pveceph install
-  args:
-    stdin: "Y\n"
-    creates: /usr/bin/ceph
-  when: proxmox_base_pve_major | int >= 7
+  ansible.builtin.command:
+    cmd: pveceph install
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: pveceph_result
+  when:
+    - proxmox_base_pve_major | int >= 7
+    - not ceph_binary.stat.exists
+  changed_when: true
+  failed_when: pveceph_result.rc != 0
+  async: 300
+  poll: 15

@@ -51,11 +51,6 @@
       ansible.builtin.command: mdadm --stop {{ md_device }}
       changed_when: true
 
-    - name: Remove MD RAID array
-      ansible.builtin.command: mdadm --remove {{ md_device }}
-      changed_when: true
-      failed_when: false
-
     - name: Remove mount point from fstab
       ansible.posix.mount:
         path: "{{ mount_point }}"

@@ -5,7 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.2] - 2026-02-22
+
+### Fixed
+
+#### Critical Fixes
+
+- **Ansible: `pveceph install` hangs** — replaced `stdin: "Y\n"` with `DEBIAN_FRONTEND=noninteractive` environment variable, since `apt` reads from `/dev/tty`, not stdin (`proxmox_base/tasks/ceph.yml`)
+- **Ansible: Invalid LXC config for Docker containers** — removed `lxc.kernel_modules: aufs ip_tables` (invalid in LXC 4.x, `aufs` removed from kernel 5.15+), added `lxc.cgroup2.devices.allow: a` for cgroup v2 compatibility on PVE 8/9 (`proxmox_lxc_docker/defaults/main.yml`, `helpers/pve-enable-lxc-docker.sh`)
+- **ZFS: Unanchored mount-point grep corrupts `MY_LVM_DEV`** — `grep -F` replaced with `awk '$3 == mp'` to prevent multi-line results from bind-mounts (`zfs/lvm-2-zfs.sh`)
+- **ZFS: fstab cleanup deletes unrelated entries** — `grep -Fv` replaced with anchored `awk` that only removes lines where mount-point field ($2) matches exactly, preserving comments and other entries (`zfs/lvm-2-zfs.sh`, `zfs/slog-cache-2-zfs.sh`)
+- **CI: `community.general` collection not declared** — added `community.general >= 7.0.0` to `ansible/collections/requirements.yml` (required by `community.general.modprobe` in `proxmox_zfs_slog_cache` role)
+
+#### High Priority Fixes
+
+- **Tinc VPN: `tinc-down` disables IP forwarding globally** — removed `echo 0 > /proc/sys/net/ipv4/ip_forward` from `tinc-down.j2` which broke all VM/container networking when VPN interface went down
+- **Tinc VPN: Duplicate `ip route add` always fails** — removed redundant route command from `tinc-up.j2` (connected route is auto-created by `ip addr add`)
+- **Tinc VPN: Service enabled but never started** — added `state: started` to systemd task and `systemctl start` to shell script
+- **Networking: `if-up.d` script with `set -e` halts network bringup** — removed `set -e`, added `|| echo "Warning: ..."` per-route error handling (`proxmox_networking/tasks/main.yml`)
+- **ZFS: `parted print` aborts on disks with no partition table** — added `2>/dev/null` and `|| true` to handle fresh drives under `set -e` (`zfs/createzfs.sh`)
+- **ZFS: Empty `readlink -f` result matches everything in grep** — added explicit empty-string check before `grep -qw` (`zfs/createzfs.sh`)
+- **ZFS: PV device not validated as MD RAID** — added `^md[0-9]+$` regex validation and `grep -F` for fixed-string matching (`zfs/lvm-2-zfs.sh`)
+- **Tinc shell script: Reset (`-r`) incorrectly requires `-c` flag** — wrapped `-c` requirement in `[ "$reset" != "yes" ]` guard (`networking/tincvpn.sh`)
+- **Tinc shell script: Silent key generation failure** — added error check to `tincd -K4096` when public key exists but private key is missing (`networking/tincvpn.sh`)
+- **Hetzner VNC: `MY_IFACE` not validated** — added empty-string check after `udevadm` detection to prevent incorrect network variable assignment (`hetzner/vnc-install-proxmox.sh`)
+- **Debian 13: Kernel removal glob too broad** — replaced `'linux-image-6.*'` with `dpkg -l` + `mapfile` to precisely target only Debian-shipped kernels (`debian-2-proxmox/debian13-2-proxmox9.sh`)
+- **Molecule: `test_sequence` missing `destroy` steps** — added `destroy` before converge and after verify to prevent stale state accumulation
+
+#### Medium Priority Fixes
+
+- **Removed dead `mdadm --remove` task** — command always fails after `mdadm --stop` since the device no longer exists (`proxmox_zfs_slog_cache/tasks/convert_md_to_zfs.yml`)
+- **Subscription banner: Conflicting sed patterns** — aligned cron script and APT hook to use the same `sed -i '/data.status/{s/\!//;s/Active/NoMoreNagging/}'` pattern (`proxmox_tuning/tasks/main.yml`, `install-post.sh`)
+- **ZFS ARC MIN/MAX off-by-one** — separated MIN from MAX (was MAX-1 byte, preventing ARC from shrinking under memory pressure). Now uses 256MB/512MB for ≤16GB RAM, 512MB/1GB for ≤32GB RAM (`install-post.sh`)
+- **ZFS comments incorrect** — fixed "11+ Drives = raidz-3" to "12+ Drives = raidz-3" to match code logic (`zfs/createzfs.sh`, `zfs/lvm-2-zfs.sh`)
+- **ZFS benchmark: No filesystem check** — added verification that CWD is on ZFS before writing ~20GB of test data (`zfs/benchmark_zfs.sh`)
+- **Tinc: `Compression` in wrong config file** — moved from per-host file (ignored by tincd) to `tinc.conf` where it takes effect (`networking/tincvpn.sh`)
+- **Tinc: Wrong broadcast address** — changed `broadcast 0.0.0.0` to `10.10.1.255` for 10.10.1.0/24 subnet (`networking/tincvpn.sh`)
+- **Hetzner VNC: NVMe controller extraction** — replaced `${dev::-2}` with `${dev%%n[0-9]*}` to handle NVMe namespaces ≥10 (`hetzner/vnc-install-proxmox.sh`)
+- **Hetzner scripts: Missing root check** — added `id -u` validation to `hetzner/pve` and `hetzner/pbs`
+- **Ansible: `proxmox_repo_key_path` undefined** — added default value in `proxmox_base/defaults/main.yml`
+
+### Changed
+
+- **Ansible-lint profile enforced** — removed `var-naming` from skip_list to enforce documented naming conventions
+- **Debian 13 package compatibility** — replaced `mlocate` with `plocate`, removed `omping` and `software-properties-common` (unavailable on Debian 13) from `install-post.sh` and `proxmox_base` defaults
 
 ## [1.0.1] - 2025-01-16
 
