@@ -606,11 +606,24 @@ echo "EXPECTED_CHECKSUM  install-post.sh" | sha256sum -c -
 
 ### Environment Variables for Checksum Verification
 
+Shell scripts:
+
 | Script | Checksum Variable | Allow Unverified Variable |
 |--------|-------------------|---------------------------|
-| `install-post.sh` | `XS_INSTALL_POST_SHA256` | `XS_ALLOW_REMOTE_INSTALL_POST` |
+| `install-post.sh` (remote download) | `XS_INSTALL_POST_SHA256` | `XS_ALLOW_REMOTE_INSTALL_POST` |
 | OVH RTM installer | `XS_OVHRTM_SHA256` | `XS_OVHRTM_ALLOW_UNVERIFIED` |
-| Hetzner post-install | `MY_POSTINSTALL_SHA256` | `MY_POSTINSTALL_ALLOW_UNVERIFIED` |
+| Hetzner `installimage` post-install | `MY_POSTINSTALL_SHA256` | `MY_POSTINSTALL_ALLOW_UNVERIFIED` |
+| Hetzner VNC: Proxmox VE ISO | `MY_PVE_ISO_SHA256` | `MY_ISO_ALLOW_UNVERIFIED` |
+| Hetzner VNC: Proxmox Backup Server ISO | `MY_PBS_ISO_SHA256` | `MY_ISO_ALLOW_UNVERIFIED` |
+
+Ansible role variables (set in `inventory/group_vars/all.yml` or `host_vars`):
+
+| Role | Variable | Purpose |
+|------|----------|---------|
+| `proxmox_security` | `xs_lynis_key_url` | Override the CISofy signing-key URL (defaults to upstream) |
+| `proxmox_security` | `xs_lynis_key_sha256` | Pinned SHA256 of the Lynis signing key (empty → trust TLS only, warns at runtime) |
+| `proxmox_nvidia` | `nvidia_docker_gpg_sha256` | Pinned SHA256 of the NVIDIA Docker GPG key |
+| `proxmox_nvidia` | `nvidia_docker_list_sha256` | Pinned SHA256 of the per-distro `nvidia-docker.list` |
 
 ### Example: Secure Remote Installation
 
@@ -622,6 +635,18 @@ export XS_ALLOW_REMOTE_INSTALL_POST="yes"
 # Run the conversion script - it will verify the checksum before execution
 ./debian12-2-proxmox8.sh
 ```
+
+```bash
+# Hetzner VNC installer: verify ISO before booting it
+export MY_PVE_ISO_SHA256="<sha256 from https://www.proxmox.com/en/downloads>"
+./vnc-install-proxmox.sh pve9
+```
+
+### Other Safety Knobs
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `XS_CEPH_FAIL_HARD` | `no` | If `yes`, `install-post.sh` aborts when `pveceph install` fails or times out instead of just logging a warning. Recommended for unattended installs. |
 
 > ⚠️ **Important**: Never set `*_ALLOW_UNVERIFIED=yes` in production. Always use checksums.
 
