@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # thanks @88plug
 set -euo pipefail
 

@@ -64,11 +64,26 @@
     mode: "0755"
   when: xs_lynis | lower == "yes"
 
+- name: Warn if Lynis signing key checksum is not pinned
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: xs_lynis_key_sha256 is empty — the CISofy signing key will be
+      trusted purely based on TLS. Set xs_lynis_key_sha256 in inventory to
+      pin a known-good SHA256 of the key.
+  when:
+    - xs_lynis | lower == "yes"
+    - xs_lynis_key_sha256 | length == 0
+
 - name: Download Lynis signing key
   ansible.builtin.get_url:
-    url: https://packages.cisofy.com/keys/cisofy-software-public.key
+    url: "{{ xs_lynis_key_url }}"
     dest: /etc/apt/keyrings/cisofy-software.asc
     mode: "0644"
+    owner: root
+    group: root
+    timeout: 30
+    validate_certs: true
+    checksum: "{{ ('sha256:' ~ xs_lynis_key_sha256) if xs_lynis_key_sha256 | length > 0 else omit }}"
   when: xs_lynis | lower == "yes"
 
 - name: Configure Lynis repository

@@ -236,6 +236,14 @@ chmod 755 /etc/tinc/xsvpn/tinc-down
 #cp -f /etc/tinc/nets.boot /etc/tinc/nets.boot.orig
 #echo "vpn" >> /etc/tinc/nets.boot
 
+# Resolve tincd path now and embed it absolutely in the unit file so that
+# the service does not silently break if tincd moves or is removed later.
+TINCD_BIN="$(command -v tincd || true)"
+if [ -z "$TINCD_BIN" ] || [ ! -x "$TINCD_BIN" ]; then
+  echo "ERROR: tincd binary not found in PATH after install — aborting" >&2
+  exit 1
+fi
+
 cat <<EOF > /etc/systemd/system/tinc-xsvpn.service
 [Unit]
 Description=ashimov.com Tinc VPN
@@ -244,8 +252,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/etc/tinc/xsvpn
-ExecStart=$(command -v tincd) -n xsvpn -D -d2
-ExecReload=$(command -v tincd) -n xsvpn -kHUP
+ExecStart=${TINCD_BIN} -n xsvpn -D -d2
+ExecReload=${TINCD_BIN} -n xsvpn -kHUP
 TimeoutStopSec=5
 Restart=always
 RestartSec=60

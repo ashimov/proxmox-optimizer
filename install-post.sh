@@ -508,7 +508,15 @@ if [ "${XS_CEPH,,}" == "yes" ] ; then
     ## Refresh the package lists
     apt-get update > /dev/null 2>&1
     ## Install ceph support
-    echo "Y" | timeout 300 pveceph install || echo "WARNING: pveceph install may require manual confirmation"
+    pveceph_rc=0
+    echo "Y" | timeout 300 pveceph install || pveceph_rc=$?
+    if [ "$pveceph_rc" -ne 0 ]; then
+      echo "ERROR: pveceph install failed or timed out (exit $pveceph_rc)"
+      echo "       Re-run manually: 'pveceph install --version ${CEPH_RELEASE}' and verify with 'pveceph status'"
+      if [ "${XS_CEPH_FAIL_HARD,,}" == "yes" ] || [ "${XS_CEPH_FAIL_HARD,,}" == "true" ]; then
+        exit 1
+      fi
+    fi
 fi
 
 if [ "${XS_LYNIS,,}" == "yes" ] ; then

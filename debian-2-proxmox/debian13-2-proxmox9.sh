@@ -190,20 +190,24 @@ if [ -f "$install_post_path" ]; then
   echo "Using local install-post.sh"
 else
   if [ "${XS_ALLOW_REMOTE_INSTALL_POST,,}" == "yes" ] ; then
-    if ! wget -q https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh -O "$install_post_path" ; then
+    # Verify checksum BEFORE executing anything from the network.
+    if [ "$XS_INSTALL_POST_SHA256" == "" ] ; then
+      echo "ERROR: XS_INSTALL_POST_SHA256 not set; refusing to download install-post.sh"
+      exit 1
+    fi
+    if ! wget --quiet --fail --timeout=30 --tries=3 \
+         https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh \
+         -O "$install_post_path" ; then
       echo "ERROR: Failed to download install-post.sh"
+      rm -f "$install_post_path"
+      exit 1
+    fi
+    if ! echo "${XS_INSTALL_POST_SHA256}  ${install_post_path}" | sha256sum -c - ; then
+      echo "ERROR: install-post.sh checksum verification failed"
+      rm -f "$install_post_path"
       exit 1
     fi
     chmod +x "$install_post_path"
-    if [ "$XS_INSTALL_POST_SHA256" != "" ] ; then
-      if ! echo "${XS_INSTALL_POST_SHA256}  ${install_post_path}" | sha256sum -c - ; then
-        echo "ERROR: install-post.sh checksum verification failed"
-        exit 1
-      fi
-    else
-      echo "ERROR: XS_INSTALL_POST_SHA256 not set; refusing to run unverified install-post.sh"
-      exit 1
-    fi
   else
     echo "Skipping install-post.sh download. Set XS_ALLOW_REMOTE_INSTALL_POST=yes and XS_INSTALL_POST_SHA256 to enable."
     install_post_path=""

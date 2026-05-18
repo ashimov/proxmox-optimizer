@@ -24,12 +24,27 @@
     group: root
     mode: "0755"
 
+- name: Warn if NVIDIA Docker supply-chain checksums are not pinned
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: nvidia_docker_gpg_sha256 / nvidia_docker_list_sha256 are empty.
+      The NVIDIA GPG key and repository list will be trusted purely based on
+      TLS. Set these to known-good SHA256 values in inventory to defend
+      against an upstream supply-chain compromise.
+  when:
+    - nvidia_docker_gpg_sha256 | length == 0
+      or nvidia_docker_list_sha256 | length == 0
+
 - name: Download NVIDIA GPG key
   ansible.builtin.get_url:
     url: "{{ nvidia_docker_gpg_url }}"
     dest: /tmp/nvidia-docker.gpgkey
     mode: "0644"
+    owner: root
+    group: root
     timeout: 30
+    validate_certs: true
+    checksum: "{{ ('sha256:' ~ nvidia_docker_gpg_sha256) if nvidia_docker_gpg_sha256 | length > 0 else omit }}"
 
 - name: Dearmor NVIDIA GPG key
   ansible.builtin.shell: |
@@ -48,7 +63,11 @@
     url: "{{ nvidia_docker_repo_url }}/{{ nvidia_distribution }}/nvidia-docker.list"
     dest: /tmp/nvidia-docker.list
     mode: "0644"
+    owner: root
+    group: root
     timeout: 30
+    validate_certs: true
+    checksum: "{{ ('sha256:' ~ nvidia_docker_list_sha256) if nvidia_docker_list_sha256 | length > 0 else omit }}"
 
 - name: Read NVIDIA repository list
   ansible.builtin.slurp:

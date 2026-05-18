@@ -10,3 +10,13 @@ xs_fail2ban: "yes"
 
 # Install Lynis security auditing tool
 xs_lynis: "yes"
+
+# Lynis (CISofy) APT signing key URL.
+# Override the URL if you mirror packages internally.
+xs_lynis_key_url: "https://packages.cisofy.com/keys/cisofy-software-public.key"
+
+# Optional pinned SHA256 of the Lynis signing key. Strongly recommended:
+# fetch the current key, run `sha256sum cisofy-software-public.key`, and
+# set this to that value to defend against an upstream key swap / MITM.
+# Leave empty to download without checksum verification (NOT recommended).
+xs_lynis_key_sha256: ""

@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-05-18
+
+### Security (OWASP A03 Injection / A08 Software & Data Integrity Failures)
+
+#### Critical
+
+- **Bash: command injection via `screen ... bash -c "$INSTALL_COMMAND"`** — `hetzner/installimage-proxmox.sh` now validates `MY_HOSTNAME`, `INSTALL_TARGET`, `BOOT`, `ROOT` with strict regex and builds the installimage invocation as an argv array passed to `screen -mS ... --`, eliminating shell-metacharacter RCE through inventory inputs (A03)
+- **Bash: postinstall script downloaded without `--fail`** — `hetzner/installimage-proxmox.sh` now uses `wget --fail --timeout=30 --tries=3` and removes any partial download on error so a truncated script cannot execute (A08)
+- **Ansible: tinc/networking templates allowed unsanitised vars in shell context** — added strict `assert:` input validation (`tinc_*` and `proxmox_*` interface/IP/port/subnet) and applied `| quote` to shell-context tinc-up/tinc-down scripts (A03)
+
+#### High
+
+- **Bash: Hetzner VNC installer trusted Proxmox ISOs without verification** — `hetzner/vnc-install-proxmox.sh` now requires `MY_PVE_ISO_SHA256` / `MY_PBS_ISO_SHA256` (or explicit `MY_ISO_ALLOW_UNVERIFIED=yes` opt-out), uses `wget --fail --timeout --tries`, and removes the `-c` resume flag (A08)
+- **Bash: remote `install-post.sh` could run before checksum check** — `debian-2-proxmox/debian1{2,3}-2-proxmox{8,9}.sh` reorders the flow so `XS_INSTALL_POST_SHA256` is enforced *and* verified before `chmod +x`, and tightens the wget call with `--fail/--timeout/--tries` (A08)
+- **Ansible: Lynis (CISofy) GPG key downloaded without checksum** — `proxmox_security` role accepts a new `xs_lynis_key_sha256` var, passes it via `get_url`'s `checksum:` parameter, and emits a runtime warning when unset (A08)
+- **Ansible: NVIDIA Docker GPG key and repo `.list` downloaded without checksum** — `proxmox_nvidia` role accepts new `nvidia_docker_gpg_sha256` / `nvidia_docker_list_sha256` vars, plumbed through `get_url` with `validate_certs: true` (A08)
+- **Ansible: `proxmox_extra_routes` ran `ip route replace` through `command:` with interpolated interface name** — converted to `argv:` form and extended the assert to require interface name match `^[a-zA-Z0-9_-]{1,15}$` (defense-in-depth against future inventory drift)
+
+#### Medium
+
+- **Bash: `pveceph install` errors silently swallowed** — `install-post.sh` now captures the timeout/install exit code, logs a recovery hint, and aborts when `XS_CEPH_FAIL_HARD=yes` (unattended-install safety)
+- **Bash: `mktemp /tmp/...` ignored `$TMPDIR`** — `zfs/lvm-2-zfs.sh` switched to `mktemp -t fstab.XXXXXX` (TOCTOU surface reduction)
+- **Bash: systemd unit captured `command -v tincd` at install time** — `networking/tincvpn.sh` now resolves the path once, verifies it is executable, and embeds the absolute path in the unit file
+- **Bash: `nvidia/nvidia-docker.sh` used non-portable `#!/bin/bash`** — normalised to `#!/usr/bin/env bash` matching the rest of the repo
+
+### CI / Supply Chain (OWASP CICD-SEC-3)
+
+- **Ansible Galaxy collections were upper-unbounded** — `ansible/collections/requirements.yml` now pins upper bounds (`ansible.utils <3.0.0`, `ansible.posix <2.0.0`, `community.general <11.0.0`) so a galaxy major-version bump cannot break playbooks mid-release
+
+### Documentation / DX
+
+- **README "Dangerous Operations" section** — promoted to a prominent warning block listing backup/check-mode/out-of-band-console requirements, with the corrected `zfs_slog_cache_confirm=true` flag
+- **install-post.env.sample** — clarified that `XS_OVHRTM_SHA256` is *required* when `XS_OVHRTM=yes` and `XS_OVHRTM_ALLOW_UNVERIFIED=no`; documented new `XS_CEPH_FAIL_HARD`
+- **.vscode/settings.json** — removed hardcoded macOS Homebrew Python path that broke Linux contributors
+
+### Known follow-up
+
+- `.shellcheckrc` severity should be raised from `warning` to `error` to make CI block on remaining HIGH-level shell findings — the config-protection hook blocked this change in-flight; tighten manually and re-run CI.
+
 ## [1.0.2] - 2026-02-22
 
 ### Fixed

@@ -132,22 +132,30 @@ xs_zfsautosnapshot: "no"
 
 ### Dangerous Operations
 
-Some playbooks perform destructive operations and require explicit confirmation:
+> ⚠️ **DESTRUCTIVE — DATA LOSS RISK**
+>
+> The playbooks below rewrite block devices, partition tables, or network
+> configuration. A typo in inventory or a stale `dangerous_confirm` will
+> wipe data or lock you out over SSH. **Always**:
+>
+> - Take a full backup or snapshot first.
+> - Run with `--check --diff` once before applying.
+> - Keep an out-of-band console (IPMI, KVM, rescue mode) open.
 
 ```bash
-# Network configuration (overwrites /etc/network/interfaces)
+# Network configuration (overwrites /etc/network/interfaces — can break SSH)
 ansible-playbook playbooks/network-configure.yml -e dangerous_confirm=yes
 
-# LVM to ZFS conversion
+# LVM to ZFS conversion (DESTROYS LVM data)
 ansible-playbook playbooks/lvm-to-zfs.yml -e dangerous_confirm=yes
 
-# ZFS pool creation
+# ZFS pool creation (wipes target devices)
 ansible-playbook playbooks/zfs-create.yml -e dangerous_confirm=yes
 
-# ZFS SLOG/cache (converts MD RAID - destructive!)
-ansible-playbook playbooks/zfs-slog-cache.yml
+# ZFS SLOG/cache (converts MD RAID — DESTRUCTIVE!)
+ansible-playbook playbooks/zfs-slog-cache.yml -e zfs_slog_cache_confirm=true
 
-# Docker in LXC (security-sensitive)
+# Docker in LXC (security-sensitive: drops most container isolation)
 ansible-playbook playbooks/lxc-docker.yml -e lxc_docker_container_id=100 -e lxc_docker_confirm=true
 ```
 

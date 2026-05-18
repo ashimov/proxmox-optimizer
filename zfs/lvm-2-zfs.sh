@@ -242,7 +242,7 @@ sleep 5
 
 echo "Cleaning up fstab / mounts"
 #/dev/pve/data   /var/lib/vz     ext3    defaults        1       2
-fstab_tmp=$(mktemp /tmp/fstab.XXXXXX)
+fstab_tmp=$(mktemp -t fstab.XXXXXX)
 trap 'rm -f "$fstab_tmp"' EXIT
 awk -v mp="$LVM_MOUNT_POINT" '/^[[:space:]]*#/ { print; next } NF >= 2 && $2 == mp { next } { print }' /etc/fstab > "$fstab_tmp" && mv "$fstab_tmp" /etc/fstab
 

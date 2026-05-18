@@ -1,6 +1,23 @@
 ---
 # Tinc VPN mesh setup for Proxmox cluster
 
+# Defense in depth: every variable below is templated into config files or
+# shell scripts (tinc-up/tinc-down). Reject characters that could break out
+# of the intended context (whitespace, quotes, newlines, shell metacharacters).
+- name: Validate tinc inputs (defense-in-depth)
+  ansible.builtin.assert:
+    that:
+      - tinc_network_name is match('^[a-zA-Z0-9_-]{1,32}$')
+      - tinc_vpn_subnet is match('^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$')
+      - (tinc_vpn_ip_last | int) >= 0 and (tinc_vpn_ip_last | int) <= 255
+      - (tinc_vpn_netmask | int) >= 0 and (tinc_vpn_netmask | int) <= 32
+      - (tinc_port | int) > 0 and (tinc_port | int) < 65536
+      - (tinc_compression | int) >= 0 and (tinc_compression | int) <= 11
+      - tinc_public_ip | length == 0 or tinc_public_ip is match('^[0-9a-fA-F:.]+$')
+      - (tinc_interface | default('Tun0')) is match('^[a-zA-Z0-9]{1,15}$')
+    fail_msg: "tinc input failed validation — refusing to template potentially unsafe values"
+    quiet: true
+
 - name: Install tinc
   ansible.builtin.apt:
     name: tinc

@@ -15,3 +15,9 @@ nvidia_docker_repo_url: "https://nvidia.github.io/nvidia-docker"
 
 # GPG key URL
 nvidia_docker_gpg_url: "https://nvidia.github.io/nvidia-docker/gpgkey"
+
+# Optional pinned SHA256 of the NVIDIA Docker GPG key and the per-distro
+# repository .list file. Strongly recommended — leave empty only if you
+# accept TLS-only trust for these supply-chain inputs.
+nvidia_docker_gpg_sha256: ""
+nvidia_docker_list_sha256: ""

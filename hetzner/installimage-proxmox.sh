@@ -551,7 +551,11 @@ else
 fi
 
 if [ ! -f "$postinstall_file" ] ; then
-  wget "$postinstall_url" -c -O "$postinstall_file"
+  if ! wget --fail --timeout=30 --tries=3 "$postinstall_url" -O "$postinstall_file" ; then
+    echo "ERROR: failed to download post-install script from $postinstall_url"
+    rm -f "$postinstall_file"
+    exit 1
+  fi
 fi
 
 if [ "$MY_POSTINSTALL_SHA256" != "" ] ; then
@@ -586,17 +590,53 @@ fi
 
 
 # INSTALL
-if [ "$OS" == "PVE"  ]; then
-  INSTALL_COMMAND="${installimage_bin} -a -t yes -i ${installimage_file} -g -s en -x /post-install-proxmox -n ${MY_HOSTNAME} -b grub -d ${INSTALL_TARGET} ${RAID} -p /boot:ext3:${BOOT}G,/:ext4:${ROOT}G${SWAP}${ZFS_L2ARC}${ZFS_SLOG},lvm:pve:all -v pve:data:/var/lib/vz:xfs:all"
+# Validate hostname and install target before constructing the install command
+# (defense-in-depth against command injection through unsanitised env vars).
+if ! [[ "$MY_HOSTNAME" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+  echo "ERROR: refusing to install with unsafe MY_HOSTNAME='${MY_HOSTNAME}'"
+  exit 1
+fi
+if ! [[ "$INSTALL_TARGET" =~ ^[a-zA-Z0-9,]+$ ]]; then
+  echo "ERROR: refusing to install with unsafe INSTALL_TARGET='${INSTALL_TARGET}'"
+  exit 1
+fi
+if ! [[ "$BOOT" =~ ^[0-9]+$ ]] || ! [[ "$ROOT" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: BOOT and ROOT must be integer GiB values"
+  exit 1
+fi
+
+# Build argv as an array so each parameter is passed as a single token to
+# installimage; this avoids word-splitting/RCE through `bash -c "$string"`.
+INSTALL_ARGV=(
+  "${installimage_bin}"
+  -a -t yes -i "${installimage_file}" -g -s en
+  -x /post-install-proxmox
+  -n "${MY_HOSTNAME}"
+  -b grub
+  -d "${INSTALL_TARGET}"
+)
+if [ -n "$RAID" ]; then
+  # RAID currently holds "-r yes -l N"; split into separate argv entries.
+  # shellcheck disable=SC2206  # intentional word split of trusted internal value
+  RAID_ARGS=( ${RAID} )
+  INSTALL_ARGV+=( "${RAID_ARGS[@]}" )
+fi
+if [ "$OS" == "PVE" ]; then
+  INSTALL_ARGV+=(
+    -p "/boot:ext3:${BOOT}G,/:ext4:${ROOT}G${SWAP}${ZFS_L2ARC}${ZFS_SLOG},lvm:pve:all"
+    -v "pve:data:/var/lib/vz:xfs:all"
+  )
 else
-  INSTALL_COMMAND="${installimage_bin} -a -t yes -i ${installimage_file} -g -s en -x /post-install-proxmox -n ${MY_HOSTNAME} -b grub -d ${INSTALL_TARGET} ${RAID} -p /boot:ext3:${BOOT}G,/:ext4:${ROOT}G${SWAP}${ZFS_L2ARC}${ZFS_SLOG},/backup:xfs:all"
+  INSTALL_ARGV+=(
+    -p "/boot:ext3:${BOOT}G,/:ext4:${ROOT}G${SWAP}${ZFS_L2ARC}${ZFS_SLOG},/backup:xfs:all"
+  )
 fi
 
 echo "Starting Installer ...."
 echo "launching via a screen process, incase your connection is disconnected"
 echo "run this script again to automatically reconnect to it."
 
-screen -mS proxmox-install /usr/bin/bash -c "$INSTALL_COMMAND"
+screen -mS proxmox-install -- "${INSTALL_ARGV[@]}"
 
 echo "Please reboot to load proxmox"
 

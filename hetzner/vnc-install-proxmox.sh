@@ -44,6 +44,13 @@ WIPE_PARTITION_TABLE="TRUE"
 MY_PVE_MAJOR=""
 # Override the Proxmox VE ISO version (example: 9.0-1)
 MY_PVE_ISO_VERSION=""
+# SHA256 checksums for ISO verification. Look these up on the official Proxmox
+# downloads page and export them, e.g.:
+#   MY_PVE_ISO_SHA256=abcd... MY_PBS_ISO_SHA256=abcd... ./vnc-install-proxmox.sh
+# Leave blank only if MY_ISO_ALLOW_UNVERIFIED=yes (NOT recommended).
+MY_PVE_ISO_SHA256="${MY_PVE_ISO_SHA256:-}"
+MY_PBS_ISO_SHA256="${MY_PBS_ISO_SHA256:-}"
+MY_ISO_ALLOW_UNVERIFIED="${MY_ISO_ALLOW_UNVERIFIED:-no}"
 ################################################################################
 
 # Set the local
@@ -84,11 +91,36 @@ MY_IP4_GATEWAY="$(ip route | grep default | xargs | cut -d" " -f3)"
 
 MY_DNS_SERVER="$(resolvectl status | grep "Current DNS Server" | cut -d":" -f2 | xargs)"
 
+# Helper: download an ISO with --fail (no partial-content), verify checksum.
+verify_iso_checksum() {
+  local file="$1" expected="$2"
+  if [ -z "$expected" ]; then
+    if [ "${MY_ISO_ALLOW_UNVERIFIED,,}" != "yes" ] && [ "${MY_ISO_ALLOW_UNVERIFIED,,}" != "true" ]; then
+      echo "ERROR: SHA256 checksum for ${file} not provided; refusing to boot unverified ISO."
+      echo "       Set the corresponding *_SHA256 var or MY_ISO_ALLOW_UNVERIFIED=yes (NOT recommended)."
+      exit 1
+    fi
+    echo "WARNING: booting ${file} WITHOUT checksum verification (MY_ISO_ALLOW_UNVERIFIED=yes)"
+    return 0
+  fi
+  if ! echo "${expected}  ${file}" | sha256sum -c - ; then
+    echo "ERROR: SHA256 mismatch for ${file}"
+    exit 1
+  fi
+}
+
 if [ "$OS" == "PBS" ] ; then
   if [ ! -f "proxmox-pbs.iso" ] ; then
     # PBS 3.x (Debian 12)
-    wget "https://download.proxmox.com/iso/proxmox-backup-server_3.3-1.iso" -c -O proxmox-pbs.iso || exit 1
+    if ! wget --fail --timeout=30 --tries=3 \
+         "https://download.proxmox.com/iso/proxmox-backup-server_3.3-1.iso" \
+         -O proxmox-pbs.iso ; then
+      rm -f proxmox-pbs.iso
+      echo "ERROR: failed to download PBS ISO"
+      exit 1
+    fi
   fi
+  verify_iso_checksum proxmox-pbs.iso "$MY_PBS_ISO_SHA256"
   INSTALL_IMAGE="proxmox-pbs.iso"
 else
   if [ "$MY_PVE_ISO_VERSION" != "" ] ; then
@@ -99,8 +131,15 @@ else
     PVE_ISO_VERSION="8.3-1"
   fi
   if [ ! -f "proxmox-ve.iso" ] ; then
-    wget "https://download.proxmox.com/iso/proxmox-ve_${PVE_ISO_VERSION}.iso" -c -O proxmox-ve.iso || exit 1
+    if ! wget --fail --timeout=30 --tries=3 \
+         "https://download.proxmox.com/iso/proxmox-ve_${PVE_ISO_VERSION}.iso" \
+         -O proxmox-ve.iso ; then
+      rm -f proxmox-ve.iso
+      echo "ERROR: failed to download PVE ISO ${PVE_ISO_VERSION}"
+      exit 1
+    fi
   fi
+  verify_iso_checksum proxmox-ve.iso "$MY_PVE_ISO_SHA256"
   INSTALL_IMAGE="proxmox-ve.iso"
 fi
 
