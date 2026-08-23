@@ -35,6 +35,8 @@ xs_logrotate: "yes"
 xs_lynis: "yes"
 xs_maxfs: "yes"
 xs_memoryfixes: "yes"
+xs_hugepages: ""
+xs_coredump: "no"
 xs_motd: "yes"
 xs_net: "yes"
 xs_noaptlang: "yes"
@@ -61,6 +63,21 @@ xs_vfio_iommu: "yes"
 # Ansible-specific toggles
 proxmox_provider: ""
 proxmox_configure_networking: "no"
+
+# Opt-in roles. Read the role defaults before switching one on: sshd and the
+# firewall can lock you out, and the update role changes what patches itself.
+proxmox_ssh_manage: "no"
+proxmox_firewall_manage: "no"
+proxmox_updates_manage: "no"
+proxmox_notifications_manage: "no"
+proxmox_backup_manage: "no"
+
+# Required once proxmox_firewall_manage is on
+proxmox_firewall_enable: false
+proxmox_firewall_management_networks: []
+
+# Where alerts go once proxmox_notifications_manage is on
+proxmox_notifications_email: ""
 
 # Hetzner Storage Box (optional; set in host_vars for secrets)
 xs_hetzner_storagebox_user: ""

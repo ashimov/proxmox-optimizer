@@ -2,13 +2,15 @@
 - name: Validate networking variables
   ansible.builtin.assert:
     that:
-      - proxmox_primary_interface | length > 0
+      - proxmox_primary_interface is match('^[a-zA-Z0-9_-]{1,15}$')
+      - proxmox_bridge_name is match('^[a-zA-Z0-9_-]{1,15}$')
       - proxmox_bridge_address | ansible.utils.ipaddr('address')
       - proxmox_bridge_netmask | ansible.utils.ipaddr('netmask')
       - proxmox_bridge_gateway | ansible.utils.ipaddr('address')
       - proxmox_ipv6_address | length == 0 or proxmox_ipv6_address | ansible.utils.ipaddr('address')
       - proxmox_ipv6_gateway | length == 0 or proxmox_ipv6_gateway | ansible.utils.ipaddr('address')
-    fail_msg: "Missing or invalid networking variables"
+    fail_msg: "Missing or invalid networking variables (interface names must match ^[a-zA-Z0-9_-]{1,15}$)"
+    quiet: true
 
 - name: Configure networking sysctl
   ansible.posix.sysctl:
@@ -42,8 +44,9 @@
     that:
       - item.cidr is defined
       - item.cidr | ansible.utils.ipaddr('net')
-      - item.interface is not defined or item.interface | length > 0
-    fail_msg: "Each proxmox_extra_routes entry must include a valid cidr and optional interface"
+      - item.interface is not defined or item.interface is match('^[a-zA-Z0-9_-]{1,15}$')
+    fail_msg: "Each proxmox_extra_routes entry must include a valid cidr; interface (if set) must match ^[a-zA-Z0-9_-]{1,15}$"
+    quiet: true
   loop: "{{ proxmox_extra_routes }}"
   when: proxmox_extra_routes | length > 0
 
@@ -72,7 +75,14 @@
   when: proxmox_extra_routes | length == 0
 
 - name: Apply extra routes immediately
-  ansible.builtin.command: ip route replace {{ item.cidr | ansible.utils.ipaddr('network') }}/{{ item.cidr | ansible.utils.ipaddr('prefix') }} dev {{ item.interface | default(proxmox_bridge_name) }}
+  ansible.builtin.command:
+    argv:
+      - ip
+      - route
+      - replace
+      - "{{ item.cidr | ansible.utils.ipaddr('network') }}/{{ item.cidr | ansible.utils.ipaddr('prefix') }}"
+      - dev
+      - "{{ item.interface | default(proxmox_bridge_name) }}"
   loop: "{{ proxmox_extra_routes }}"
   changed_when: false
   when:

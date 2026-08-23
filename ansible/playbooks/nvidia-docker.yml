@@ -21,3 +21,4 @@
   roles:
     - role: proxmox_nvidia
       tags: ["nvidia", "docker", "gpu"]
+      when: nvidia_docker_enabled | bool

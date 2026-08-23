@@ -1,1 +1,2 @@
-severity=warning
+# The whole tree is clean at this level - keep it that way.
+severity=style

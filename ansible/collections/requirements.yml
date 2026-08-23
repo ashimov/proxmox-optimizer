@@ -1,8 +1,11 @@
 ---
+# Galaxy collection requirements.
+# Upper bounds are pinned to the current major version to prevent breaking
+# changes from a galaxy upgrade. Review and bump deliberately during releases.
 collections:
   - name: ansible.utils
-    version: ">=2.10.0"
+    version: ">=2.10.0,<3.0.0"
   - name: ansible.posix
-    version: ">=1.5.0"
+    version: ">=1.5.0,<2.0.0"
   - name: community.general
-    version: ">=7.0.0"
+    version: ">=7.0.0,<11.0.0"

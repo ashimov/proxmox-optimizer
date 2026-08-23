@@ -1,5 +1,8 @@
+# Copy to hosts.ini and fill in real addresses.
+# hosts.ini is git-ignored on purpose - do not commit real infrastructure.
+
 [proxmox]
-pve1 ansible_host=ip_address
+pve1 ansible_host=192.0.2.10
 
 [proxmox:vars]
 ansible_user=root

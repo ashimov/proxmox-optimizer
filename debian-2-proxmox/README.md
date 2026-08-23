@@ -40,7 +40,7 @@
 ### Debian 13 - Proxmox VE 9 (Recommended)
 
 ```bash
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/debian-2-proxmox/debian13-2-proxmox9.sh
+curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/debian-2-proxmox/debian13-2-proxmox9.sh
 chmod +x debian13-2-proxmox9.sh
 ./debian13-2-proxmox9.sh
 ```
@@ -48,7 +48,7 @@ chmod +x debian13-2-proxmox9.sh
 ### Debian 12 - Proxmox VE 8
 
 ```bash
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/debian-2-proxmox/debian12-2-proxmox8.sh
+curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/debian-2-proxmox/debian12-2-proxmox8.sh
 chmod +x debian12-2-proxmox8.sh
 ./debian12-2-proxmox8.sh
 ```
@@ -65,7 +65,6 @@ All conversion scripts automatically:
 - Add Proxmox APT repositories
 - Install Proxmox VE packages
 - Configure postfix (local only)
-- Create admin user with Administrator role
 - Run post-installation optimizer (`install-post.sh`) when available or explicitly allowed
 
 ---
@@ -76,9 +75,7 @@ After script completion:
 
 1. **Reboot** the system
 2. Access web interface at `https://your-ip:8006`
-3. Login options:
-   - `root@pam` (Linux PAM)
-   - `admin@pve` (Proxmox user, password set during install)
+3. Log in as `root@pam` (Linux PAM)
 
 ---
 
@@ -101,6 +98,19 @@ After script completion:
 - Enterprise repository is disabled automatically
 - Post-install script runs automatically if local, or when remote download is enabled
 - To allow download, set `XS_ALLOW_REMOTE_INSTALL_POST=yes` and `XS_INSTALL_POST_SHA256=<expected_sha256>`
+
+## Optional admin@pve account
+
+The scripts no longer create a Proxmox-realm admin account by default. If you
+want one, ask for it and supply the password up front, otherwise a failure
+later in the run would leave an Administrator account with no password on it:
+
+```bash
+XS_CREATE_ADMIN_USER=yes XS_ADMIN_PASSWORD='...' ./debian13-2-proxmox9.sh
+```
+
+Interactive runs will prompt instead. A non-interactive run without
+`XS_ADMIN_PASSWORD` removes the half-created account and says so.
 
 ---
 

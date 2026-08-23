@@ -2,65 +2,86 @@
 - name: Molecule verify
   hosts: all
   gather_facts: false
+
+  vars:
+    project_root: "{{ playbook_dir }}/../.."
+    # Every playbook, with the extra vars needed to get past vars_prompt.
+    playbooks_to_check:
+      - name: playbooks/proxmox.yml
+      - name: playbooks/validate-postinstall.yml
+      - name: playbooks/smoke-test.yml
+      - name: playbooks/lxc-docker.yml
+      - name: playbooks/nvidia-docker.yml
+      - name: playbooks/network-configure.yml
+      - name: playbooks/lvm-to-zfs.yml
+      - name: playbooks/zfs-create.yml
+      - name: playbooks/tinc-vpn.yml
+      - name: playbooks/zfs-slog-cache.yml
+        extra: "-e confirm_destruction=CI_SKIP"
+
   tasks:
-    - name: Syntax check main playbook
-      ansible.builtin.command: ansible-playbook playbooks/proxmox.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check validation playbook
-      ansible.builtin.command: ansible-playbook playbooks/validate-postinstall.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check smoke-test playbook
-      ansible.builtin.command: ansible-playbook playbooks/smoke-test.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check lxc-docker playbook
-      ansible.builtin.command: ansible-playbook playbooks/lxc-docker.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check nvidia-docker playbook
-      ansible.builtin.command: ansible-playbook playbooks/nvidia-docker.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check network-configure playbook
-      ansible.builtin.command: ansible-playbook playbooks/network-configure.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check lvm-to-zfs playbook
-      ansible.builtin.command: ansible-playbook playbooks/lvm-to-zfs.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check zfs-create playbook
-      ansible.builtin.command: ansible-playbook playbooks/zfs-create.yml --syntax-check
-      args:
-        chdir: "{{ playbook_dir }}/../.."
-      changed_when: false
-
-    - name: Syntax check zfs-slog-cache playbook
+    - name: Syntax check every playbook
       ansible.builtin.command: >-
-        ansible-playbook playbooks/zfs-slog-cache.yml --syntax-check
-        -e confirm_destruction=CI_SKIP
+        ansible-playbook {{ item.name }} --syntax-check {{ item.extra | default('') }}
       args:
-        chdir: "{{ playbook_dir }}/../.."
+        chdir: "{{ project_root }}"
+      loop: "{{ playbooks_to_check }}"
+      loop_control:
+        label: "{{ item.name }}"
       changed_when: false
 
-    - name: Syntax check tinc-vpn playbook
-      ansible.builtin.command: ansible-playbook playbooks/tinc-vpn.yml --syntax-check
+    # A playbook addressing a group that does not exist in the inventory runs
+    # against zero hosts and still exits 0 - that is how 'proxmox_nodes' shipped.
+    - name: Resolve hosts for every playbook against the example inventory
+      ansible.builtin.command: >-
+        ansible-playbook -i inventory/hosts.ini.example {{ item.name }}
+        --list-hosts {{ item.extra | default('') }}
       args:
-        chdir: "{{ playbook_dir }}/../.."
+        chdir: "{{ project_root }}"
+      loop: "{{ playbooks_to_check }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: listed_hosts
       changed_when: false
+
+    - name: Assert every playbook matches at least one host
+      ansible.builtin.assert:
+        that:
+          - "'hosts (0)' not in item.stdout"
+          - "'Could not match supplied host pattern' not in item.stderr"
+        fail_msg: >-
+          {{ item.item.name }} matched no hosts in inventory/hosts.ini.example -
+          the play targets a group that does not exist.
+        quiet: true
+      loop: "{{ listed_hosts.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # Cheap guard against the class of bug where a regex is double-escaped in
+    # single-quoted YAML and therefore never matches anything.
+    - name: Verify the Proxmox signed-by normalisation regexes actually match
+      ansible.builtin.assert:
+        that:
+          - sample_list_line is search(list_regex)
+          - sample_sources_line is search(sources_regex)
+        fail_msg: "proxmox_base signed-by regexes no longer match a standard repo line"
+        quiet: true
+      vars:
+        list_regex: '^(deb\s+\[[^\]]*?)signed-by=[^\s\]]+'
+        sources_regex: '^Signed-By:\s*\S+'
+        sample_list_line: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/old.gpg]
+          https://download.proxmox.com/debian/pve bookworm pve-no-subscription
+        sample_sources_line: "Signed-By: /etc/apt/keyrings/old.gpg"
+
+    # The bracket in each pattern is deliberate: it keeps this guard from
+    # matching itself while still matching the legacy identifier everywhere else.
+    - name: Verify no legacy project identifiers remain
+      ansible.builtin.command: >-
+        grep -rIil --exclude-dir=.git --exclude-dir=.history --exclude-dir=.remember
+        --exclude=CHANGELOG.md -e 'xsho[k]' -e 'xsvp[n]' .
+      args:
+        chdir: "{{ project_root }}/.."
+      register: legacy_names
+      changed_when: false
+      failed_when: legacy_names.rc == 0

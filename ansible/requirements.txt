@@ -1,0 +1,6 @@
+# Control node requirements.
+#
+# netaddr is not optional: the ipaddr filter from ansible.utils needs it, and
+# the networking, firewall and provider roles all use it.
+ansible>=9,<11
+netaddr>=0.9

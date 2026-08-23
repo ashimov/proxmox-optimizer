@@ -29,6 +29,14 @@ xs_vzdump: "yes"
 # Memory optimizations
 xs_memoryfixes: "yes"
 
+# Preallocate hugepages (page count). Empty = do not preallocate: hugepages are
+# locked away from normal allocation.
+xs_hugepages: ""
+
+# Write kernel core dumps to /var/crash. Off by default: a dump of a Proxmox
+# daemon contains cluster keys and authentication tickets in cleartext.
+xs_coredump: "no"
+
 # TCP BBR congestion control
 xs_tcpbbr: "yes"
 

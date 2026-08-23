@@ -2,4 +2,4 @@
 iface {{ tinc_interface | default('Tun0') }} inet static
   address {{ tinc_vpn_subnet }}.{{ tinc_vpn_ip_last }}
   netmask 255.255.255.0
-  broadcast 0.0.0.0
+  broadcast {{ tinc_vpn_subnet }}.255

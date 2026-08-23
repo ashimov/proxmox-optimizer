@@ -1,0 +1,64 @@
+---
+- name: Validate update settings
+  ansible.builtin.assert:
+    that:
+      - proxmox_updates_mail_report in ['on-change', 'only-on-error', 'always']
+      - proxmox_updates_auto_reboot_time is match('^[0-9]{2}:[0-9]{2}$')
+      - proxmox_updates_mail | length == 0 or proxmox_updates_mail is match('^[^@[:space:]]+@[^@[:space:]]+$')
+    fail_msg: "Invalid proxmox_updates_* values"
+    quiet: true
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+  when: proxmox_updates_unattended | bool
+
+- name: Configure the unattended-upgrades policy
+  ansible.builtin.template:
+    src: 51-ashimov-unattended.j2
+    dest: /etc/apt/apt.conf.d/51-ashimov-unattended
+    owner: root
+    group: root
+    mode: "0644"
+  when: proxmox_updates_unattended | bool
+
+- name: Configure the apt periodic schedule
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the unattended-upgrades timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  when:
+    - proxmox_updates_unattended | bool
+    - not ansible_check_mode
+
+- name: Check the policy parses
+  ansible.builtin.command: unattended-upgrades --dry-run --debug
+  register: proxmox_updates_dryrun
+  changed_when: false
+  failed_when: proxmox_updates_dryrun.rc != 0
+  when:
+    - proxmox_updates_unattended | bool
+    - not ansible_check_mode
+
+- name: Warn when no failure address is set
+  ansible.builtin.debug:
+    msg: >-
+      unattended-upgrades is on but proxmox_updates_mail is empty, so a failed
+      upgrade will only be visible in the journal.
+  when:
+    - proxmox_updates_unattended | bool
+    - proxmox_updates_mail | length == 0

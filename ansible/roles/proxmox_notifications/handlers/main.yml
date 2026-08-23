@@ -1,0 +1,15 @@
+---
+- name: Restart postfix
+  ansible.builtin.systemd:
+    name: postfix
+    state: restarted
+
+- name: Restart zed
+  ansible.builtin.systemd:
+    name: zfs-zed
+    state: restarted
+
+- name: Restart smartd
+  ansible.builtin.systemd:
+    name: smartmontools
+    state: restarted

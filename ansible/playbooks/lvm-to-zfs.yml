@@ -147,11 +147,15 @@
         group: root
         mode: "0755"
 
+    # The script refuses to run without LVM2ZFS_CONFIRM; the play-level
+    # dangerous_confirm gate above is what the operator actually sets.
     - name: Run lvm-2-zfs script with custom mount
       ansible.builtin.command:
         argv:
           - "{{ lvm_script_path }}"
           - "{{ lvm_mount_point }}"
+      environment:
+        LVM2ZFS_CONFIRM: "yes"
       when: lvm_mount_point | length > 0
       changed_when: true
 
@@ -159,5 +163,7 @@
       ansible.builtin.command:
         argv:
           - "{{ lvm_script_path }}"
+      environment:
+        LVM2ZFS_CONFIRM: "yes"
       when: lvm_mount_point | length == 0
       changed_when: true

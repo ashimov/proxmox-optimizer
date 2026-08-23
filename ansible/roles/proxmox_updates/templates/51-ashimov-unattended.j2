@@ -1,0 +1,26 @@
+// Managed by Ansible (proxmox_updates). Local edits will be overwritten.
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+{% if proxmox_updates_include_proxmox %}
+    "origin=Proxmox";
+{% endif %}
+};
+
+Unattended-Upgrade::Package-Blacklist {
+{% for pkg in proxmox_updates_blacklist %}
+    "{{ pkg }}";
+{% endfor %}
+};
+
+{% if proxmox_updates_mail | length > 0 %}
+Unattended-Upgrade::Mail "{{ proxmox_updates_mail }}";
+Unattended-Upgrade::MailReport "{{ proxmox_updates_mail_report }}";
+{% endif %}
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+Unattended-Upgrade::Automatic-Reboot "{{ 'true' if proxmox_updates_auto_reboot else 'false' }}";
+{% if proxmox_updates_auto_reboot %}
+Unattended-Upgrade::Automatic-Reboot-Time "{{ proxmox_updates_auto_reboot_time }}";
+{% endif %}
+Unattended-Upgrade::SyslogEnable "true";

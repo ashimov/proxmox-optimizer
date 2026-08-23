@@ -1,6 +1,6 @@
 ---
 # Tinc VPN network name
-tinc_network_name: "xsvpn"
+tinc_network_name: "pvemesh"
 
 # VPN subnet (10.10.1.0/24 by default)
 tinc_vpn_subnet: "10.10.1"
@@ -21,8 +21,17 @@ tinc_connect_to: ""
 # RSA key size
 tinc_rsa_key_size: 4096
 
-# Compression level (10 = LZO)
-tinc_compression: 10
+# Compression level (0 = off). Compressing before encryption leaks information
+# about the plaintext (CRIME-class attacks), so it is off by default.
+tinc_compression: 0
+
+# The tinc 1.0 legacy protocol defaults to blowfish/SHA1. Pin something modern;
+# every node in the mesh must agree on these values.
+tinc_cipher: "aes-256-cbc"
+tinc_digest: "sha256"
+
+# Tunnel interface name
+tinc_interface: "Tun0"
 
 # Enable IP forwarding
 tinc_ip_forwarding: false

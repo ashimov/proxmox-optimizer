@@ -168,16 +168,26 @@
     - xs_hetzner_robot | default(false)
     - hetzner_robot_servers is defined
 
+# Robot wants form-encoded params on /rdns/<ip>, not JSON on /rdns
+- name: Validate Hetzner Robot RDNS entries
+  ansible.builtin.assert:
+    that:
+      - item.ip is defined and item.ip | ansible.utils.ipaddr('address')
+      - item.ptr is defined and item.ptr is match('^[a-zA-Z0-9.-]{1,253}$')
+    fail_msg: "Each xs_hetzner_robot_rdns entry needs a valid ip and ptr"
+    quiet: true
+  loop: "{{ xs_hetzner_robot_rdns | default([]) }}"
+  when: xs_hetzner_robot_rdns | default([]) | length > 0
+
 - name: Configure Hetzner Robot RDNS entries
   ansible.builtin.uri:
-    url: "{{ xs_hetzner_robot_endpoint }}/rdns"
+    url: "{{ xs_hetzner_robot_endpoint }}/rdns/{{ item.ip }}"
     method: POST
     user: "{{ hetzner_robot_user_effective }}"
     password: "{{ hetzner_robot_pass_effective }}"
     force_basic_auth: true
-    body_format: json
+    body_format: form-urlencoded
     body:
-      ip: "{{ item.ip }}"
       ptr: "{{ item.ptr }}"
     status_code:
       - 200

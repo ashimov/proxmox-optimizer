@@ -29,11 +29,14 @@ ansible-playbook playbooks/tinc-vpn.yml -i inventory/hosts.ini
 ### Tinc VPN Inventory Example
 
 ```ini
-[proxmox_nodes]
+[proxmox]
 node1 tinc_vpn_ip_last=1 tinc_connect_to=node2
 node2 tinc_vpn_ip_last=2 tinc_connect_to=node3
 node3 tinc_vpn_ip_last=3 tinc_connect_to=node1
 ```
+
+The play runs `serial: 1`, collects each node's host file into
+`ansible/tinc_hosts/`, then copies them to every other node.
 
 ## Shell Scripts
 
@@ -54,20 +57,27 @@ Creates a routed network configuration with:
 ### Usage
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/networking/network-configure.sh
 chmod +x network-configure.sh
 ./network-configure.sh
 ```
 
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `XS_DHCP_PUBLIC` | no | Enable DHCP on public interface |
+The script overwrites `/etc/network/interfaces` and saves the old one as
+`/etc/network/interfaces.<timestamp>`. The new config only takes effect on
+reboot or `ifreload -a`, so check it before you restart networking.
 
 ## tincvpn.sh
 
-Creates a mesh VPN network with multicast support, ideal for Proxmox clustering.
+Creates a mesh VPN with multicast support, for corosync/Ceph traffic between
+nodes. Config lives in `/etc/tinc/pvemesh`, the unit is `tinc-pvemesh.service`.
+
+Cipher and digest are pinned to `aes-256-cbc` and `sha256`, and compression is
+off. Every node in the mesh has to agree on those three values, so if you are
+adding a node to an older mesh, either update all of them or match the old
+settings in `/etc/tinc/pvemesh/tinc.conf`.
+
+Tinc 1.0 has no forward secrecy. For a new deployment WireGuard is the better
+answer; this script exists for the clusters that already run tinc.
 
 ### Usage
 
@@ -104,7 +114,10 @@ Creates a mesh VPN network with multicast support, ideal for Proxmox clustering.
 ./tincvpn.sh -i 3 -c host1
 ```
 
-After running on each node, copy the host configuration displayed to other nodes.
+After running on each node, copy the host block it prints to the other nodes.
+The same block is saved at `/etc/tinc/pvemesh/this_host.info`.
+
+`-r` rewrites the config, `-u` stops and removes it. Both keep the RSA keys.
 
 ---
 

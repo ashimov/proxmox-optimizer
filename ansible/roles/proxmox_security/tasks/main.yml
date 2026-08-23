@@ -22,13 +22,22 @@
     dest: /etc/fail2ban/filter.d/proxmox.conf
     content: |
       [Definition]
-      failregex = pvedaemon\[.*authentication failure; rhost=<HOST> user=.* msg=.*
+      # Matches both pvedaemon and pveproxy authentication failures
+      failregex = pve(daemon|proxy)\[.*authentication failure; rhost=<HOST> user=.* msg=.*
       ignoreregex =
+      journalmatch = _SYSTEMD_UNIT=pvedaemon.service + _SYSTEMD_UNIT=pveproxy.service
     owner: root
     group: root
     mode: "0644"
   when: xs_fail2ban | lower == "yes"
   notify: Restart fail2ban
+
+# No rsyslog means no daemon.log, and a missing logpath kills the jail quietly
+- name: Check for /var/log/daemon.log
+  ansible.builtin.stat:
+    path: /var/log/daemon.log
+  register: proxmox_daemon_log
+  when: xs_fail2ban | lower == "yes"
 
 - name: Configure fail2ban jail
   ansible.builtin.copy:
@@ -38,7 +47,12 @@
       enabled = true
       port = https,http,8006,8007
       filter = proxmox
+      {% if proxmox_daemon_log.stat.exists | default(false) %}
+      backend = auto
       logpath = /var/log/daemon.log
+      {% else %}
+      backend = systemd
+      {% endif %}
       maxretry = 3
       bantime = 3600
       findtime = 600
@@ -55,6 +69,30 @@
     state: started
   when: xs_fail2ban | lower == "yes"
 
+- name: Flush handlers so the jail is reloaded before it is verified
+  ansible.builtin.meta: flush_handlers
+
+# A dead jail still lets the play report success, so check it
+- name: Verify the proxmox jail is active
+  ansible.builtin.command: fail2ban-client status proxmox
+  register: proxmox_jail_status
+  changed_when: false
+  failed_when: false
+  when:
+    - xs_fail2ban | lower == "yes"
+    - not ansible_check_mode
+
+- name: Warn when the proxmox jail is not active
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: the fail2ban 'proxmox' jail is NOT active
+      ({{ proxmox_jail_status.stderr | default('no output') | trim }}).
+      The web interface is not being protected - check /var/log/fail2ban.log.
+  when:
+    - xs_fail2ban | lower == "yes"
+    - not ansible_check_mode
+    - proxmox_jail_status.rc | default(1) != 0
+
 - name: Ensure apt keyrings directory exists
   ansible.builtin.file:
     path: /etc/apt/keyrings
@@ -64,11 +102,25 @@
     mode: "0755"
   when: xs_lynis | lower == "yes"
 
+- name: Warn if Lynis signing key checksum is not pinned
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: xs_lynis_key_sha256 is empty, the CISofy signing key is trusted
+      on TLS alone. Pin a known-good SHA256 in inventory.
+  when:
+    - xs_lynis | lower == "yes"
+    - xs_lynis_key_sha256 | length == 0
+
 - name: Download Lynis signing key
   ansible.builtin.get_url:
-    url: https://packages.cisofy.com/keys/cisofy-software-public.key
+    url: "{{ xs_lynis_key_url }}"
     dest: /etc/apt/keyrings/cisofy-software.asc
     mode: "0644"
+    owner: root
+    group: root
+    timeout: 30
+    validate_certs: true
+    checksum: "{{ ('sha256:' ~ xs_lynis_key_sha256) if xs_lynis_key_sha256 | length > 0 else omit }}"
   when: xs_lynis | lower == "yes"
 
 - name: Configure Lynis repository

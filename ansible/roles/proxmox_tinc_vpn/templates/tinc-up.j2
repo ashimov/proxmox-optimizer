@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-ip link set $INTERFACE up
-ip addr add {{ tinc_vpn_subnet }}.{{ tinc_vpn_ip_last }}/{{ tinc_vpn_netmask }} dev $INTERFACE
+set -eu
+ip link set "$INTERFACE" up
+ip addr add {{ (tinc_vpn_subnet ~ '.' ~ tinc_vpn_ip_last ~ '/' ~ tinc_vpn_netmask) | quote }} dev "$INTERFACE"
 
-# Set a multicast route over interface
-route add -net 224.0.0.0 netmask 240.0.0.0 dev $INTERFACE
+# Multicast route over the tunnel (iproute2 - net-tools may not be installed)
+ip route replace 224.0.0.0/4 dev "$INTERFACE" || true
 {% if tinc_ip_forwarding %}
 
 # Enable IP forwarding

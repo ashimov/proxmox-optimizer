@@ -7,6 +7,15 @@
       tags: ["base"]
     - role: proxmox_security
       tags: ["security"]
+    - role: proxmox_ssh
+      tags: ["security", "ssh"]
+      when: proxmox_ssh_manage | lower == "yes"
+    - role: proxmox_updates
+      tags: ["security", "updates"]
+      when: proxmox_updates_manage | lower == "yes"
+    - role: proxmox_firewall
+      tags: ["security", "firewall"]
+      when: proxmox_firewall_manage | lower == "yes"
     - role: proxmox_tuning
       tags: ["tuning"]
     - role: proxmox_zfs
@@ -16,6 +25,12 @@
     - role: proxmox_networking
       tags: ["networking"]
       when: proxmox_configure_networking | lower == "yes"
+    - role: proxmox_notifications
+      tags: ["notifications"]
+      when: proxmox_notifications_manage | lower == "yes"
+    - role: proxmox_backup
+      tags: ["backup"]
+      when: proxmox_backup_manage | lower == "yes"
     - role: provider_ovh
       tags: ["provider", "ovh"]
       when: proxmox_provider | lower == "ovh"

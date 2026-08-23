@@ -41,19 +41,60 @@ Native Proxmox installation from ISO on systems without IPMI.
 - SATA SSD used for boot/root instead of NVMe
 - Uses NVMe if sda is a spinning disk
 
+### Before you run it
+
+The script boots the Proxmox ISO in QEMU against your real disks, so it wants
+two things from you:
+
+- `MY_PVE_ISO_SHA256` (or `MY_PBS_ISO_SHA256`) from the
+  [Proxmox downloads page](https://www.proxmox.com/en/downloads). Without it the
+  script refuses to boot the ISO.
+- `INSTALL_CONFIRM=yes`. With `WIPE_PARTITION_TABLE=TRUE` (the default) it
+  writes a fresh GPT label on the install target, which throws away every
+  partition on it. The script prints the disks with model and serial and waits
+  10 seconds first.
+
 ### Installation Commands
 
 ```bash
 # Download script
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/vnc-install-proxmox.sh
+curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/hetzner/vnc-install-proxmox.sh
 chmod +x vnc-install-proxmox.sh
+
+export MY_PVE_ISO_SHA256="<sha256 from the Proxmox downloads page>"
 ```
 
 | Platform | Command |
 |----------|---------|
-| **Proxmox VE 8** (default) | `./vnc-install-proxmox.sh` |
-| **Proxmox VE 9** | `./vnc-install-proxmox.sh pve9` |
-| **Proxmox Backup Server** | `./vnc-install-proxmox.sh pbs` |
+| **Proxmox VE 8** (default) | `INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh` |
+| **Proxmox VE 9** | `INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh pve9` |
+| **Proxmox Backup Server** | `INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh pbs` |
+
+### Reaching the installer
+
+The VNC server listens on `127.0.0.1:5900` only. VNC authentication uses just
+the first 8 characters of the password, and the rescue system sits on a public
+IP with no firewall, so it is not something to expose. Tunnel to it:
+
+```bash
+ssh -N -L 5900:127.0.0.1:5900 root@<rescue-ip>
+# then point your VNC client at localhost:5900
+```
+
+The password is printed by the script. If you really need a direct bind, set
+`MY_VNC_BIND=0.0.0.0` and understand what you are getting.
+
+### Useful variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INSTALL_CONFIRM` | `no` | Must be `yes` before anything touches a disk |
+| `MY_PVE_ISO_SHA256` / `MY_PBS_ISO_SHA256` | empty | Expected ISO checksum |
+| `MY_ISO_ALLOW_UNVERIFIED` | `no` | Skip the checksum check (don't) |
+| `MY_PVE_ISO_VERSION` | `8.3-1` / `9.0-1` | ISO version to download |
+| `MY_VNC_BIND` | `127.0.0.1` | VNC listen address |
+| `WIPE_PARTITION_TABLE` | `TRUE` | Write a new GPT label on the target |
+| `NVME_FORCE_4K` | `FALSE` | Reformat NVMe to 4K LBA before installing |
 
 ---
 
@@ -92,15 +133,29 @@ Wait a few minutes, then connect via SSH:
 
 ```bash
 # Download script
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/installimage-proxmox.sh -c -O installimage-proxmox.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/hetzner/installimage-proxmox.sh -O installimage-proxmox.sh
 chmod +x installimage-proxmox.sh
 ```
 
 | Platform | Command |
 |----------|---------|
-| **Proxmox VE 8** | `./installimage-proxmox.sh "your.hostname.fqdn"` |
-| **Proxmox VE 9** | `./installimage-proxmox.sh "your.hostname.fqdn" pve9` |
-| **Proxmox Backup Server** | `./installimage-proxmox.sh "your.hostname.fqdn" pbs` |
+| **Proxmox VE 8** | `INSTALL_CONFIRM=yes ./installimage-proxmox.sh "your.hostname.fqdn"` |
+| **Proxmox VE 9** | `INSTALL_CONFIRM=yes ./installimage-proxmox.sh "your.hostname.fqdn" pve9` |
+| **Proxmox Backup Server** | `INSTALL_CONFIRM=yes ./installimage-proxmox.sh "your.hostname.fqdn" pbs` |
+
+The script downloads its post-install file (`hetzner/pve` or `hetzner/pbs`) from
+GitHub and runs it inside the chroot as root, so it wants the checksum:
+
+```bash
+export MY_POSTINSTALL_SHA256="<sha256 of hetzner/pve>"
+```
+
+Without it the run stops, unless you set `MY_POSTINSTALL_ALLOW_UNVERIFIED=true`.
+
+Partition layout knobs: `MY_BOOT`, `MY_ROOT`, `MY_SWAP`, `MY_ZFS_SLOG`,
+`MY_ZFS_L2ARC` (all in GB, blank means auto). SLOG and cache partitions are
+mounted at `/ashimov/zfs-slog` and `/ashimov/zfs-cache`, which is what
+`zfs/slog-cache-2-zfs.sh` looks for afterwards.
 
 #### Step 4: Reboot
 
@@ -117,16 +172,18 @@ After installation, connect via SSH to your new Proxmox system.
 ### 1. LVM to ZFS Conversion (Optional)
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/lvm-2-zfs.sh -c -O lvm-2-zfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/lvm-2-zfs.sh -O lvm-2-zfs.sh
 chmod +x lvm-2-zfs.sh
-./lvm-2-zfs.sh && rm lvm-2-zfs.sh
+LVM2ZFS_CONFIRM=yes ./lvm-2-zfs.sh && rm lvm-2-zfs.sh
 # REBOOT
 ```
+
+This destroys `/var/lib/vz`. Back it up first.
 
 ### 2. Network Configuration (vmbr0)
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh -c -O network-configure.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/networking/network-configure.sh -O network-configure.sh
 chmod +x network-configure.sh
 ./network-configure.sh && rm network-configure.sh
 # REBOOT
@@ -137,7 +194,8 @@ chmod +x network-configure.sh
 *Skip if using installimage method (already included)*
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh -c -O install-post.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh -O install-post.sh
+# verify against the release SHA256SUMS before running
 chmod +x install-post.sh
 ./install-post.sh && rm install-post.sh
 ```

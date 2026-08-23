@@ -1,0 +1,83 @@
+---
+- name: Validate SSH settings
+  ansible.builtin.assert:
+    that:
+      - proxmox_ssh_permit_root_login in ['yes', 'no', 'prohibit-password', 'forced-commands-only']
+      - proxmox_ssh_password_authentication in ['yes', 'no']
+      - (proxmox_ssh_port | int) > 0 and (proxmox_ssh_port | int) < 65536
+      - (proxmox_ssh_max_auth_tries | int) > 0
+    fail_msg: "Invalid proxmox_ssh_* values"
+    quiet: true
+
+- name: Check for root authorized_keys
+  ansible.builtin.stat:
+    path: /root/.ssh/authorized_keys
+  register: proxmox_ssh_root_keys
+
+# Locking yourself out of a remote hypervisor is a bad afternoon. Stop here
+# rather than after the restart.
+- name: Refuse to disable password logins without a key in place
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to set PasswordAuthentication=no / PermitRootLogin=prohibit-password:
+      /root/.ssh/authorized_keys is missing or empty on {{ inventory_hostname }}.
+      Install a key first, or set proxmox_ssh_require_authorized_keys=false if you
+      have console access and know what you are doing.
+  when:
+    - proxmox_ssh_require_authorized_keys | bool
+    - proxmox_ssh_password_authentication | lower == "no" or proxmox_ssh_permit_root_login != "yes"
+    - not (proxmox_ssh_root_keys.stat.exists and (proxmox_ssh_root_keys.stat.size | default(0)) > 0)
+
+- name: Check that sshd_config.d is included
+  ansible.builtin.command: grep -qs '^Include /etc/ssh/sshd_config.d/\*.conf' /etc/ssh/sshd_config
+  register: proxmox_ssh_include
+  changed_when: false
+  failed_when: false
+
+- name: Add the sshd_config.d include
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "Include /etc/ssh/sshd_config.d/*.conf"
+    insertbefore: BOF
+  when: proxmox_ssh_include.rc != 0
+
+- name: Ensure sshd_config.d exists
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the sshd drop-in
+  ansible.builtin.template:
+    src: sshd.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-ashimov.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+    backup: true
+  notify: Restart sshd
+
+# validate: above only parses the drop-in. Check the whole config too, so a
+# conflict with something else in sshd_config.d fails the play instead of the
+# restart.
+- name: Validate the complete sshd configuration
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Enable sshd
+  ansible.builtin.systemd:
+    name: ssh
+    enabled: true
+    state: started
+
+- name: Report the resulting policy
+  ansible.builtin.debug:
+    msg: >-
+      sshd: port {{ proxmox_ssh_port }},
+      PermitRootLogin {{ proxmox_ssh_permit_root_login }},
+      PasswordAuthentication {{ proxmox_ssh_password_authentication }}.
+      Keep this session open and test a new one before logging out.

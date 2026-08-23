@@ -20,7 +20,7 @@
 # ie. fresh ubuntu lts server with https://github.com/ashimov/ashimov-docker
 #
 # Usage:
-# curl https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/helpers/pve-enable-lxc-docker.sh --output /usr/sbin/pve-enable-lxc-docker && chmod +x /usr/sbin/pve-enable-lxc-docker
+# curl https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/helpers/pve-enable-lxc-docker.sh --output /usr/sbin/pve-enable-lxc-docker && chmod +x /usr/sbin/pve-enable-lxc-docker
 # pve-enable-lxc-docker container_id
 #
 ################################################################################
@@ -68,7 +68,6 @@ echo "  This script will configure the LXC container to run Docker by:"
 echo "    - Disabling AppArmor confinement (lxc.apparmor.profile: unconfined)"
 echo "    - Allowing access to all devices (lxc.cgroup.devices.allow: a)"
 echo "    - Dropping no capabilities (lxc.cap.drop: empty)"
-echo "    - Loading kernel modules (aufs, ip_tables)"
 echo "    - Mounting proc and sys as read-write"
 echo ""
 echo "  RISKS:"

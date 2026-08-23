@@ -13,12 +13,12 @@
 #
 ################################################################################
 #
-# Assumptions: /xshok/zfs-cache and/or /xshok/zfs-slog are mounted.
+# Assumptions: /ashimov/zfs-cache and/or /ashimov/zfs-slog are mounted.
 #
 # Assumes mounted MD raid partitions (linux software raid)
 #
 # Usage:
-# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/slog-cache-2-zfs.sh && chmod +x slog-cache-2-zfs.sh
+# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/slog-cache-2-zfs.sh && chmod +x slog-cache-2-zfs.sh
 # ./slog-cache-2-zfs.sh MY_ZFS_POOL
 #
 # NOTES: remove slog with
@@ -47,11 +47,11 @@ if [ "$MY_ZFS_POOL" == "" ]; then
   MY_ZFS_POOL="hddpool"
 fi
 
-declare -a XSHOK_MOUNTS=('/xshok/zfs-cache' '/xshok/zfs-slog');
+declare -a ZFS_MOUNTS=('/ashimov/zfs-cache' '/ashimov/zfs-slog');
 
 echo "+++++++++++++++++++++++++"
 echo "WILL DESTROY ALL DATA ON"
-echo "${XSHOK_MOUNTS[@]}"
+echo "${ZFS_MOUNTS[@]}"
 echo "+++++++++++++++++++++++++"
 echo "[CTRL]+[C] to exit"
 echo "+++++++++++++++++++++++++"
@@ -64,15 +64,15 @@ echo "1.." ; sleep 1
 echo "STARTING CONVERSION"
 sleep 1
 
-for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
-  echo "$XSHOK_MOUNT_POINT"
+for ZFS_MOUNT_POINT in "${ZFS_MOUNTS[@]}" ; do
+  echo "$ZFS_MOUNT_POINT"
   #check mountpiont exists and is a device
-  XSHOK_MOUNT_POINT_DEV=$(mount | grep -F "$XSHOK_MOUNT_POINT" | cut -d " " -f 1 || true)
-  if [ "$XSHOK_MOUNT_POINT_DEV" != "" ] ; then
+  ZFS_MOUNT_POINT_DEV=$(mount | awk -v mp="$ZFS_MOUNT_POINT" '$3 == mp {print $1; exit}' || true)
+  if [ "$ZFS_MOUNT_POINT_DEV" != "" ] ; then
      echo "Found partition, continuing"
-     echo "XSHOK_MOUNT_POINT_DEV=$XSHOK_MOUNT_POINT_DEV" #/dev/mapper/pve-data
+     echo "ZFS_MOUNT_POINT_DEV=$ZFS_MOUNT_POINT_DEV" #/dev/mapper/pve-data
   else
-    echo "SKIPPING: $XSHOK_MOUNT_POINT not found"
+    echo "SKIPPING: $ZFS_MOUNT_POINT not found"
     continue
   fi
 
@@ -100,16 +100,17 @@ for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
     exit 1
   fi
 
-  XSHOK_MOUNT_POINT_MD_RAID="${XSHOK_MOUNT_POINT_DEV##*/}"
-  if [[ ! "$XSHOK_MOUNT_POINT_MD_RAID" =~ ^md[0-9]+$ ]]; then
-    echo "ERROR: $XSHOK_MOUNT_POINT_DEV does not appear to be an MD device (got: $XSHOK_MOUNT_POINT_MD_RAID)"
+  ZFS_MOUNT_POINT_MD_RAID="${ZFS_MOUNT_POINT_DEV##*/}"
+  if [[ ! "$ZFS_MOUNT_POINT_MD_RAID" =~ ^md[0-9]+$ ]]; then
+    echo "ERROR: $ZFS_MOUNT_POINT_DEV does not appear to be an MD device (got: $ZFS_MOUNT_POINT_MD_RAID)"
     exit 1
   fi
 
-  IFS=' ' read -r -a mddevarray <<< "$(grep "$XSHOK_MOUNT_POINT_MD_RAID :" /proc/mdstat | cut -d ' ' -f5- | xargs)"
+  # "(auto-read-only)" shifts the columns, so match name[index] tokens
+  mapfile -t mddevarray < <(grep -F "$ZFS_MOUNT_POINT_MD_RAID :" /proc/mdstat | grep -oE '[a-zA-Z0-9]+\[[0-9]+\]' || true)
 
-  if [ "${mddevarray[0]}" == "" ] ; then
-    echo "ERROR: no devices found for $XSHOK_MOUNT_POINT_DEV in /proc/mdstat"
+  if [ "${#mddevarray[@]}" -eq 0 ] || [ "${mddevarray[0]}" == "" ] ; then
+    echo "ERROR: no devices found for $ZFS_MOUNT_POINT_DEV in /proc/mdstat"
     exit 1
   fi
   #check there is a minimum of 1 drives detected, not needed, but i rather have it.
@@ -118,22 +119,32 @@ for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
     exit 1
   fi
 
-  # remove [*] and /dev/ to each record
+  # remove [*] and prefix /dev/ on each record
   echo "Creating the device array"
   for index in "${!mddevarray[@]}" ; do
       tempmddevarraystring="${mddevarray[index]}"
-      mddevarray[index]="/dev/${tempmddevarraystring%\[*\]}"
+      mddevarray[index]="/dev/${tempmddevarraystring%%\[*}"
   done
 
+  # Nothing to roll back to once the superblocks are zeroed
+  for MY_MD_MEMBER in "${mddevarray[@]}" ; do
+    if [ ! -b "$MY_MD_MEMBER" ] ; then
+      echo "ERROR: parsed member '${MY_MD_MEMBER}' is not a block device - aborting before any destructive step"
+      echo "Parsed members: ${mddevarray[*]}"
+      exit 1
+    fi
+  done
+  echo "Validated MD members: ${mddevarray[*]}"
+
   echo "Destroying MD (linux raid)"
-  echo umount -f "${XSHOK_MOUNT_POINT_DEV}"
-  umount -f "${XSHOK_MOUNT_POINT_DEV}"
-  echo mdadm --stop "${XSHOK_MOUNT_POINT_DEV}"
-  mdadm --stop "${XSHOK_MOUNT_POINT_DEV}"
+  echo umount -f "${ZFS_MOUNT_POINT_DEV}"
+  umount -f "${ZFS_MOUNT_POINT_DEV}"
+  echo mdadm --stop "${ZFS_MOUNT_POINT_DEV}"
+  mdadm --stop "${ZFS_MOUNT_POINT_DEV}"
   echo "Cleaning up fstab / mounts"
   fstab_tmp=$(mktemp /tmp/fstab.XXXXXX)
   trap 'rm -f "$fstab_tmp"' EXIT
-  awk -v mp="$XSHOK_MOUNT_POINT" '/^[[:space:]]*#/ { print; next } NF >= 2 && $2 == mp { next } { print }' /etc/fstab > "$fstab_tmp" && mv "$fstab_tmp" /etc/fstab
+  awk -v mp="$ZFS_MOUNT_POINT" '/^[[:space:]]*#/ { print; next } NF >= 2 && $2 == mp { next } { print }' /etc/fstab > "$fstab_tmp" && mv "$fstab_tmp" /etc/fstab
 
   MY_MD_DEV_PATHS=()
   for MY_MD_DEV in "${mddevarray[@]}" ; do
@@ -153,11 +164,16 @@ for XSHOK_MOUNT_POINT in "${XSHOK_MOUNTS[@]}" ; do
       MY_MD_DEV_PATHS+=("$MY_MD_DEV_PATH")
   done
 
-  if [ "$XSHOK_MOUNT_POINT" == "/xshok/zfs-cache" ] ; then
+  if [ "${#MY_MD_DEV_PATHS[@]}" -eq 0 ] ; then
+    echo "ERROR: no usable device paths resolved for ${ZFS_MOUNT_POINT}"
+    exit 1
+  fi
+
+  if [ "$ZFS_MOUNT_POINT" == "/ashimov/zfs-cache" ] ; then
     echo "Adding ${mddevarray[*]} to ${MY_ZFS_POOL} as CACHE"
     printf '%s\n' "${MY_MD_DEV_PATHS[@]}"
     zpool add "${MY_ZFS_POOL}" cache "${MY_MD_DEV_PATHS[@]}"
-  elif [ "$XSHOK_MOUNT_POINT" == "/xshok/zfs-slog" ] ; then
+  elif [ "$ZFS_MOUNT_POINT" == "/ashimov/zfs-slog" ] ; then
     echo "Adding ${mddevarray[*]} to ${MY_ZFS_POOL} as SLOG"
     printf '%s\n' "${MY_MD_DEV_PATHS[@]}"
     if [ "${#mddevarray[@]}" -eq "1" ] ; then

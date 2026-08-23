@@ -18,6 +18,7 @@ export LC_ALL="C"
 mkdir -p /run/lock
 chmod a+rwxt /run/lock
 
+# shellcheck disable=SC1091
 source /etc/os-release
 if [ "$VERSION_CODENAME" != "bookworm" ] && [ "$VERSION_CODENAME" != "trixie" ]; then
   echo "ERROR: Unsupported Debian codename: ${VERSION_CODENAME}"
@@ -70,7 +71,15 @@ EOF
 /usr/bin/env DEBIAN_FRONTEND=noninteractive RUNLEVEL=1 apt install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew postfix proxmox-ve open-iscsi
 
 echo -e "\n----------------- Deinstalling the Debian standard kernel packages ------------------\n"
-/usr/bin/env DEBIAN_FRONTEND=noninteractive RUNLEVEL=1 apt purge -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew 'linux-image-6.*'
+running_kernel="$(uname -r)"
+mapfile -t debian_kernels < <(dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 2>/dev/null \
+  | grep -v -- '-pve' | grep -vF "linux-image-${running_kernel}" || true)
+if [ "${#debian_kernels[@]}" -gt 0 ]; then
+  echo "Removing Debian kernels: ${debian_kernels[*]}"
+  /usr/bin/env DEBIAN_FRONTEND=noninteractive RUNLEVEL=1 apt purge -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew "${debian_kernels[@]}" || true
+else
+  echo "No Debian-shipped kernel packages to remove"
+fi
 
 if [ -f /etc/apt/sources.list.d/pve-enterprise.list ]; then
   echo -e "\n----- Removing Proxmox Enterprise repo -----\n"

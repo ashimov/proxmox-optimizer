@@ -63,6 +63,14 @@ fi
 if [ -z "$XS_CEPH" ] ; then
     XS_CEPH="no"
 fi
+# Abort the whole run when 'pveceph install' fails (default: warn and continue)
+if [ -z "$XS_CEPH_FAIL_HARD" ] ; then
+    XS_CEPH_FAIL_HARD="no"
+fi
+# Write kernel core dumps to /var/crash (may contain secrets held in memory)
+if [ -z "$XS_COREDUMP" ] ; then
+    XS_COREDUMP="no"
+fi
 # Disable portmapper / rpcbind (security)
 if [ -z "$XS_DISABLERPC" ] ; then
     XS_DISABLERPC="yes"
@@ -122,6 +130,10 @@ fi
 # Optimise Memory
 if [ -z "$XS_MEMORYFIXES" ] ; then
     XS_MEMORYFIXES="yes"
+fi
+# Preallocate hugepages (page count, empty = do not preallocate)
+if [ -z "$XS_HUGEPAGES" ] ; then
+    XS_HUGEPAGES=""
 fi
 # Pretty MOTD BANNER
 if [ -z "$XS_MOTD" ] ; then
@@ -215,6 +227,14 @@ fi
 if [ -z "$XS_PROXMOX_KEY_URL" ] ; then
     XS_PROXMOX_KEY_URL=""
 fi
+# Optional SHA256 checksums for the APT signing keys (recommended).
+# Empty = trust TLS only, a warning is printed at runtime.
+if [ -z "$XS_PROXMOX_KEY_SHA256" ] ; then
+    XS_PROXMOX_KEY_SHA256=""
+fi
+if [ -z "$XS_CISOFY_KEY_SHA256" ] ; then
+    XS_CISOFY_KEY_SHA256=""
+fi
 # Increase vzdump backup speed
 if [ -z "$XS_VZDUMP" ] ; then
     XS_VZDUMP="yes"
@@ -239,11 +259,29 @@ echo "Processing .... "
 # Resolve env file relative to script's own directory (not CWD)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "${SCRIPT_DIR}/install-post.env" ] ; then
-    # Security: only source if owned by root and not group/world-writable
+    # Sourcing this runs it as root, so require root ownership and no write
+    # access for anyone else, on the file and on the directory holding it.
     env_perms=$(stat -c %a "${SCRIPT_DIR}/install-post.env" 2>/dev/null || echo "777")
     env_owner=$(stat -c %u "${SCRIPT_DIR}/install-post.env" 2>/dev/null || echo "9999")
+    env_dir_perms=$(stat -c %a "${SCRIPT_DIR}" 2>/dev/null || echo "777")
+    env_dir_owner=$(stat -c %u "${SCRIPT_DIR}" 2>/dev/null || echo "9999")
     env_group_bit="${env_perms: -2:1}"
     env_other_bit="${env_perms: -1}"
+    env_dir_group_bit="${env_dir_perms: -2:1}"
+    env_dir_other_bit="${env_dir_perms: -1}"
+    if [ -L "${SCRIPT_DIR}/install-post.env" ] ; then
+        echo "WARNING: install-post.env is a symlink, refusing to source it"
+        env_owner="9999"
+    fi
+    if [ "$env_dir_owner" != "0" ] ; then
+        echo "WARNING: ${SCRIPT_DIR} is not owned by root, refusing to source install-post.env"
+        env_owner="9999"
+    elif [[ "$env_dir_group_bit" =~ ^[0-9]$ ]] && [[ "$env_dir_other_bit" =~ ^[0-9]$ ]] \
+         && { [ "$env_dir_group_bit" -eq 2 ] || [ "$env_dir_group_bit" -eq 3 ] || [ "$env_dir_group_bit" -ge 6 ] \
+              || [ "$env_dir_other_bit" -eq 2 ] || [ "$env_dir_other_bit" -eq 3 ] || [ "$env_dir_other_bit" -ge 6 ]; } ; then
+        echo "WARNING: ${SCRIPT_DIR} is group/world-writable, refusing to source install-post.env"
+        env_owner="9999"
+    fi
     if [[ "$env_group_bit" =~ ^[0-9]$ ]] && [[ "$env_other_bit" =~ ^[0-9]$ ]] && [ "$env_owner" == "0" ] && [ "$env_group_bit" -le 4 ] && [ "$env_other_bit" -le 4 ]; then
         echo "Loading variables from install-post.env ..."
         # shellcheck disable=SC1091
@@ -328,6 +366,24 @@ is_valid_ip() {
     return 1
 }
 
+# verify_sha256 <file> <expected sha256> <name>
+# Empty checksum warns and continues.
+verify_sha256() {
+    local file="$1"
+    local expected="$2"
+    local name="$3"
+    if [ "$expected" == "" ] ; then
+        echo "WARNING: no SHA256 pinned for ${name}; trusting TLS only"
+        return 0
+    fi
+    if ! echo "${expected}  ${file}" | sha256sum -c - >/dev/null ; then
+        echo "ERROR: SHA256 verification failed for ${name} (${file})"
+        return 1
+    fi
+    echo "Verified SHA256 for ${name}"
+    return 0
+}
+
 # Add a parameter to GRUB_CMDLINE_LINUX_DEFAULT if not already present
 add_grub_cmdline_param() {
     local param="$1"
@@ -410,6 +466,11 @@ if [ "${XS_NOENTREPO,,}" == "yes" ] ; then
       mkdir -p /etc/apt/keyrings
       if ! wget -q --timeout=10 --tries=3 "$PROXMOX_KEY_URL" -O "$PROXMOX_KEYRING"; then
         echo "ERROR: Failed to download Proxmox key from ${PROXMOX_KEY_URL}"
+        rm -f "$PROXMOX_KEYRING"
+        exit 1
+      fi
+      if ! verify_sha256 "$PROXMOX_KEYRING" "$XS_PROXMOX_KEY_SHA256" "Proxmox release key" ; then
+        rm -f "$PROXMOX_KEYRING"
         exit 1
       fi
     fi
@@ -508,7 +569,15 @@ if [ "${XS_CEPH,,}" == "yes" ] ; then
     ## Refresh the package lists
     apt-get update > /dev/null 2>&1
     ## Install ceph support
-    echo "Y" | timeout 300 pveceph install || echo "WARNING: pveceph install may require manual confirmation"
+    pveceph_rc=0
+    echo "Y" | timeout 300 pveceph install || pveceph_rc=$?
+    if [ "$pveceph_rc" -ne 0 ]; then
+      echo "ERROR: pveceph install failed or timed out (exit $pveceph_rc)"
+      echo "       Re-run manually: 'pveceph install --version ${CEPH_RELEASE}' and verify with 'pveceph status'"
+      if [ "${XS_CEPH_FAIL_HARD,,}" == "yes" ] || [ "${XS_CEPH_FAIL_HARD,,}" == "true" ]; then
+        exit 1
+      fi
+    fi
 fi
 
 if [ "${XS_LYNIS,,}" == "yes" ] ; then
@@ -517,6 +586,11 @@ if [ "${XS_LYNIS,,}" == "yes" ] ; then
     mkdir -p /etc/apt/keyrings
     if ! wget -q --timeout=10 --tries=3 -O /etc/apt/keyrings/cisofy-software.asc "$XS_CISOFY_KEY_URL"; then
       echo "ERROR: Failed to download Cisofy key from ${XS_CISOFY_KEY_URL}"
+      rm -f /etc/apt/keyrings/cisofy-software.asc
+      exit 1
+    fi
+    if ! verify_sha256 /etc/apt/keyrings/cisofy-software.asc "$XS_CISOFY_KEY_SHA256" "Cisofy (Lynis) signing key" ; then
+      rm -f /etc/apt/keyrings/cisofy-software.asc
       exit 1
     fi
     ## Add the latest lynis
@@ -781,16 +855,27 @@ if [ "${XS_FAIL2BAN,,}" == "yes" ] ; then
     # shellcheck disable=1117
 cat <<EOF > /etc/fail2ban/filter.d/proxmox.conf
 [Definition]
-failregex = pvedaemon\[.*authentication failure; rhost=<HOST> user=.* msg=.*
+# Matches both pvedaemon and pveproxy authentication failures
+failregex = pve(daemon|proxy)\[.*authentication failure; rhost=<HOST> user=.* msg=.*
 ignoreregex =
+journalmatch = _SYSTEMD_UNIT=pvedaemon.service + _SYSTEMD_UNIT=pveproxy.service
 EOF
+
+# No rsyslog means no daemon.log, and a missing logpath kills the jail quietly
+f2b_backend="systemd"
+f2b_logpath=""
+if [ -f /var/log/daemon.log ] ; then
+  f2b_backend="auto"
+  f2b_logpath="logpath = /var/log/daemon.log"
+fi
 
 cat <<EOF > /etc/fail2ban/jail.d/proxmox.conf
 [proxmox]
 enabled = true
 port = https,http,8006,8007
 filter = proxmox
-logpath = /var/log/daemon.log
+backend = ${f2b_backend}
+${f2b_logpath}
 maxretry = 3
 # 1 hour
 bantime = 3600
@@ -803,9 +888,19 @@ EOF
 # EOF
 
     systemctl enable fail2ban
+    systemctl restart fail2ban || true
+    # A dead jail is silent, so check it
+    if command -v fail2ban-client >/dev/null 2>&1; then
+      sleep 2
+      if fail2ban-client status proxmox >/dev/null 2>&1; then
+        echo "fail2ban: proxmox jail is active"
+      else
+        echo "WARNING: fail2ban proxmox jail is NOT active - check 'fail2ban-client status proxmox' and /var/log/fail2ban.log"
+      fi
+    fi
 
     #     ##testing
-    #     #fail2ban-regex /var/log/daemon.log /etc/fail2ban/filter.d/proxmox.conf
+    #     #fail2ban-regex systemd-journal /etc/fail2ban/filter.d/proxmox.conf
 fi
 
 if [ "${XS_NOSUBBANNER,,}" == "yes" ] ; then
@@ -842,13 +937,43 @@ if [ "${XS_KERNELPANIC,,}" == "yes" ] ; then
     cat <<EOF > /etc/sysctl.d/99-xs-kernelpanic.conf
 # ashimov.com
 # Enable restart on kernel panic, kernel oops and hardlockup
-kernel.core_pattern=/var/crash/core.%t.%p
-# Reboot on kernel panic afetr 10s
+# Reboot on kernel panic after 10s
 kernel.panic=10
 # Panic on kernel oops, kernel exploits generally create an oops
 kernel.panic_on_oops=1
 # Panic on a hardlockup
 kernel.hardlockup_panic=1
+EOF
+fi
+
+# Dumps of pvedaemon and friends contain cluster keys, so keep them off
+if [ "${XS_COREDUMP,,}" == "yes" ] ; then
+    mkdir -p /var/crash
+    chmod 700 /var/crash
+    cat <<EOF > /etc/sysctl.d/99-xs-coredump.conf
+# ashimov.com
+kernel.core_pattern=/var/crash/core.%t.%p
+# Never dump setuid/privilege-changed processes
+fs.suid_dumpable=0
+EOF
+    # Keep /var/crash from filling the root filesystem
+    cat <<EOF > /etc/logrotate.d/xs-crash
+/var/crash/core.* {
+  daily
+  rotate 3
+  missingok
+  notifempty
+  maxage 7
+  compress
+}
+EOF
+else
+    rm -f /etc/sysctl.d/99-xs-coredump.conf
+    cat <<EOF > /etc/sysctl.d/99-xs-coredump.conf
+# ashimov.com
+# Core dumps disabled (set XS_COREDUMP=yes to enable)
+kernel.core_pattern=|/bin/false
+fs.suid_dumpable=0
 EOF
 fi
 
@@ -971,16 +1096,27 @@ fi
 
 if [ "${XS_MEMORYFIXES,,}" == "yes" ] ; then
     ## Optimise Memory
+    # ~1/64 of RAM, clamped to 64M..1G. A flat 1G is a lot on a small host.
+    MY_MIN_FREE_KB=$(( RAM_SIZE_GB * 1024 * 1024 / 64 ))
+    if [ "$MY_MIN_FREE_KB" -lt 65536 ] ; then
+        MY_MIN_FREE_KB=65536
+    fi
+    if [ "$MY_MIN_FREE_KB" -gt 1048576 ] ; then
+        MY_MIN_FREE_KB=1048576
+    fi
 cat <<EOF > /etc/sysctl.d/99-xs-memory.conf
 # ashimov.com
 # Memory Optimising
-## Bugfix: reserve 1024MB memory for system
-vm.min_free_kbytes=1048576
-vm.nr_hugepages=72
+## Reserve memory for the kernel, scaled to ${RAM_SIZE_GB}GB of RAM
+vm.min_free_kbytes=${MY_MIN_FREE_KB}
 # (Redis/MongoDB)
 vm.max_map_count=262144
 vm.overcommit_memory = 1
 EOF
+    # Hugepages are locked away from normal allocation, so opt in only
+    if [ "${XS_HUGEPAGES}" != "" ] && [[ "$XS_HUGEPAGES" =~ ^[0-9]+$ ]] ; then
+        echo "vm.nr_hugepages=${XS_HUGEPAGES}" >> /etc/sysctl.d/99-xs-memory.conf
+    fi
 fi
 
 if [ "${XS_TCPBBR,,}" == "yes" ] ; then
@@ -1013,13 +1149,13 @@ net.core.somaxconn=8151
 net.core.wmem_max=16777216
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.all.log_martians = 0
+net.ipv4.conf.all.log_martians = 1
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.all.secure_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.default.accept_source_route = 0
-net.ipv4.conf.default.log_martians = 0
+net.ipv4.conf.default.log_martians = 1
 net.ipv4.conf.default.rp_filter = 1
 net.ipv4.conf.default.secure_redirects = 0
 net.ipv4.conf.default.send_redirects = 0

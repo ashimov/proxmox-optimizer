@@ -1,0 +1,39 @@
+---
+# Defaults for proxmox_firewall
+#
+# Writes the cluster-level Proxmox firewall config. Nothing is enabled until you
+# set proxmox_firewall_enable, and the role refuses to enable the firewall if the
+# address you are connecting from is not covered by a management network.
+
+proxmox_firewall_manage: "no"
+
+# Turning this on activates the firewall cluster-wide.
+proxmox_firewall_enable: false
+
+# Networks allowed to reach the management ports. CIDR notation.
+# Example: ["203.0.113.0/24", "10.0.0.0/8"]
+proxmox_firewall_management_networks: []
+
+# Ports opened to the management networks
+proxmox_firewall_management_ports:
+  - 22      # ssh
+  - 8006    # pve web ui
+  - 8007    # pbs web ui
+
+# Cluster peers, allowed to talk to each other on any port (corosync, ceph,
+# migration). Empty means no peer rules are written.
+proxmox_firewall_cluster_networks: []
+
+# Ports opened to everyone, e.g. [80, 443] if the node also serves traffic
+proxmox_firewall_public_ports: []
+
+# Default policy for traffic to the host itself
+proxmox_firewall_policy_in: DROP
+proxmox_firewall_policy_out: ACCEPT
+
+# Extra raw rule lines appended to the [RULES] section
+proxmox_firewall_extra_rules: []
+
+# Skip the "are you inside a management network" check. Only for a run from a
+# host that is not the one you administer from.
+proxmox_firewall_skip_self_check: false

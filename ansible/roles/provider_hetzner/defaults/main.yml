@@ -20,10 +20,10 @@ xs_hetzner_storagebox: false
 # Storage Box mount point
 xs_hetzner_storagebox_mount: "/mnt/storagebox"
 
-# Storage Box credentials (set in host_vars for security)
-# xs_hetzner_storagebox_user: ""
-# xs_hetzner_storagebox_pass: ""
-# xs_hetzner_storagebox_host: ""
+# Storage Box credentials. Keep the real values in host_vars, encrypted.
+xs_hetzner_storagebox_user: ""
+xs_hetzner_storagebox_pass: ""
+xs_hetzner_storagebox_host: ""
 xs_hetzner_storagebox_share: "backup"
 xs_hetzner_storagebox_credentials_file: "/root/.storagebox-credentials"
 

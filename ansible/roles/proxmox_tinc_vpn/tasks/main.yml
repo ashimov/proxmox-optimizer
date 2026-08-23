@@ -1,6 +1,41 @@
 ---
 # Tinc VPN mesh setup for Proxmox cluster
 
+# Everything here ends up in a config file or in tinc-up/tinc-down.
+- name: Validate tinc inputs
+  ansible.builtin.assert:
+    that:
+      - tinc_network_name is match('^[a-zA-Z0-9_-]{1,32}$')
+      - tinc_vpn_subnet is match('^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$')
+      - (tinc_vpn_ip_last | int) >= 0 and (tinc_vpn_ip_last | int) <= 255
+      - (tinc_vpn_netmask | int) >= 0 and (tinc_vpn_netmask | int) <= 32
+      - (tinc_port | int) > 0 and (tinc_port | int) < 65536
+      - (tinc_compression | int) >= 0 and (tinc_compression | int) <= 11
+      - tinc_public_ip | length == 0 or tinc_public_ip is match('^[0-9a-fA-F:.]+$')
+      - (tinc_interface | default('Tun0')) is match('^[a-zA-Z0-9]{1,15}$')
+      - tinc_connect_to | length == 0 or (tinc_connect_to | replace('-', '_')) is match('^[a-zA-Z0-9_]{1,64}$')
+      - tinc_cipher is match('^[a-zA-Z0-9-]{1,32}$')
+      - tinc_digest is match('^[a-zA-Z0-9-]{1,32}$')
+    fail_msg: "tinc input failed validation, refusing to write config files"
+    quiet: true
+
+# Host files are written verbatim, a newline here would add tinc directives.
+- name: Validate tinc_hosts entries
+  ansible.builtin.assert:
+    that:
+      - item.name is defined and (item.name | replace('-', '_')) is match('^[a-zA-Z0-9_]{1,64}$')
+      - item.address is defined and item.address is match('^[0-9a-zA-Z:.-]{1,255}$')
+      - item.subnet is defined and item.subnet is match('^[0-9a-fA-F:./]{1,64}$')
+      - (item.port | default(655) | int) > 0 and (item.port | default(655) | int) < 65536
+      - (item.compression | default(0) | int) >= 0 and (item.compression | default(0) | int) <= 11
+      - item.public_key is defined and 'BEGIN RSA PUBLIC KEY' in item.public_key
+    fail_msg: "tinc_hosts entry failed validation: {{ item.name | default('<unnamed>') }}"
+    quiet: true
+  loop: "{{ tinc_hosts }}"
+  loop_control:
+    label: "{{ item.name | default('<unnamed>') }}"
+  when: tinc_hosts | length > 0
+
 - name: Install tinc
   ansible.builtin.apt:
     name: tinc

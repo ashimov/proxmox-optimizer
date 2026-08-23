@@ -7,7 +7,6 @@
   vars:
     dangerous_confirm: "no"
     dangerous_backup_dir: "/root/ansible-backups"
-    network_dhcp_public: "no"
     network_script_path: "/root/ansible-scripts/network-configure.sh"
 
   pre_tasks:
@@ -28,7 +27,7 @@
 
     - name: Show requested operation
       ansible.builtin.debug:
-        msg: "Requested network configuration with XS_DHCP_PUBLIC={{ network_dhcp_public }}"
+        msg: "Requested routed vmbr0 configuration (overwrites /etc/network/interfaces)"
 
     - name: Require confirmation for destructive action
       ansible.builtin.debug:
@@ -112,7 +111,6 @@
         dest: "{{ dangerous_backup_dir }}/network-configure-{{ backup_stamp }}.log"
         content: |
           ## Network configure preflight
-          XS_DHCP_PUBLIC={{ network_dhcp_public }}
 
           == ip addr ==
           {{ ip_addr_out.stdout | default('') }}
@@ -143,6 +141,4 @@
       ansible.builtin.command:
         argv:
           - "{{ network_script_path }}"
-      environment:
-        XS_DHCP_PUBLIC: "{{ network_dhcp_public }}"
       changed_when: true

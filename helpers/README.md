@@ -43,7 +43,10 @@ Configures an LXC container to properly support Docker.
 
 ### Security Warning
 
-Running Docker inside LXC containers requires elevated privileges and may have security implications. The container runs in a higher privileged mode.
+This removes most of what isolates the container from the host: AppArmor is
+switched off, all devices are allowed, no capabilities are dropped, and `/proc`
+and `/sys` are mounted read-write. A container escape stops being a hard problem.
+Do not do this on a shared or multi-tenant host.
 
 > **Recommendation:** Use a dedicated VM (QEMU/KVM) for Docker instead of LXC containers.
 
@@ -57,7 +60,7 @@ LXC_DOCKER_CONFIRM=yes pve-enable-lxc-docker <container_id>
 ### Installation
 
 ```bash
-curl https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/helpers/pve-enable-lxc-docker.sh \
+curl https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/helpers/pve-enable-lxc-docker.sh \
   --output /usr/sbin/pve-enable-lxc-docker
 chmod +x /usr/sbin/pve-enable-lxc-docker
 ```
@@ -68,9 +71,11 @@ Adds the following to the container configuration:
 
 - `lxc.apparmor.profile: unconfined`
 - `lxc.cgroup.devices.allow: a`
+- `lxc.cgroup2.devices.allow: a`
 - `lxc.cap.drop:` (empty)
-- `linux.kernel_modules: aufs ip_tables`
 - `lxc.mount.auto: proc:rw sys:rw`
+
+Then it restarts the container with `pct stop` / `pct start`.
 
 ---
 
