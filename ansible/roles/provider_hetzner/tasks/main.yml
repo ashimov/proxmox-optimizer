@@ -172,7 +172,7 @@
 - name: Validate Hetzner Robot RDNS entries
   ansible.builtin.assert:
     that:
-      - item.ip is defined and item.ip | ansible.utils.ipaddr('address')
+      - item.ip is defined and (item.ip | ansible.utils.ipaddr('address')) is truthy
       - item.ptr is defined and item.ptr is match('^[a-zA-Z0-9.-]{1,253}$')
     fail_msg: "Each xs_hetzner_robot_rdns entry needs a valid ip and ptr"
     quiet: true

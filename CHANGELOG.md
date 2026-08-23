@@ -136,6 +136,11 @@ Found by the new fixture on its first runs:
   parses `pveversion`, so the fixture runs the playbook a second time with that
   branch forced.
 
+- Conditionals that ended in `ipaddr(...)` evaluated to a string, not a boolean.
+  ansible-core 2.19 rejects that outright, so the networking, firewall and
+  Hetzner RDNS asserts would have broken on the next ansible release. Wrapped in
+  the `truthy` test; the fixture now passes on core 2.17 and 2.19 alike.
+
 And the CI that was supposed to catch all this:
 
 - Every workflow using `setup-python` with `cache: pip` failed at the Python

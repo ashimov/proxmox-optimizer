@@ -4,11 +4,11 @@
     that:
       - proxmox_primary_interface is match('^[a-zA-Z0-9_-]{1,15}$')
       - proxmox_bridge_name is match('^[a-zA-Z0-9_-]{1,15}$')
-      - proxmox_bridge_address | ansible.utils.ipaddr('address')
-      - proxmox_bridge_netmask | ansible.utils.ipaddr('netmask')
-      - proxmox_bridge_gateway | ansible.utils.ipaddr('address')
-      - proxmox_ipv6_address | length == 0 or proxmox_ipv6_address | ansible.utils.ipaddr('address')
-      - proxmox_ipv6_gateway | length == 0 or proxmox_ipv6_gateway | ansible.utils.ipaddr('address')
+      - proxmox_bridge_address | ansible.utils.ipaddr('address') is truthy
+      - proxmox_bridge_netmask | ansible.utils.ipaddr('netmask') is truthy
+      - proxmox_bridge_gateway | ansible.utils.ipaddr('address') is truthy
+      - proxmox_ipv6_address | length == 0 or (proxmox_ipv6_address | ansible.utils.ipaddr('address')) is truthy
+      - proxmox_ipv6_gateway | length == 0 or (proxmox_ipv6_gateway | ansible.utils.ipaddr('address')) is truthy
     fail_msg: "Missing or invalid networking variables (interface names must match ^[a-zA-Z0-9_-]{1,15}$)"
     quiet: true
 
@@ -43,7 +43,7 @@
   ansible.builtin.assert:
     that:
       - item.cidr is defined
-      - item.cidr | ansible.utils.ipaddr('net')
+      - item.cidr | ansible.utils.ipaddr('net') is truthy
       - item.interface is not defined or item.interface is match('^[a-zA-Z0-9_-]{1,15}$')
     fail_msg: "Each proxmox_extra_routes entry must include a valid cidr; interface (if set) must match ^[a-zA-Z0-9_-]{1,15}$"
     quiet: true

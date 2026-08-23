@@ -21,7 +21,7 @@
 - name: Validate every network is a CIDR
   ansible.builtin.assert:
     that:
-      - item | ansible.utils.ipaddr('net')
+      - item | ansible.utils.ipaddr('net') is truthy
     fail_msg: "Not a valid network: {{ item }}"
     quiet: true
   loop: "{{ proxmox_firewall_management_networks + proxmox_firewall_cluster_networks }}"
