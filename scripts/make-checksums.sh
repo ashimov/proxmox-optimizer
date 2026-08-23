@@ -7,8 +7,9 @@
 #
 # Builds the SHA256SUMS list published with each release.
 #
-# Covers everything a user is told to download and run: the shell scripts, the
-# two extensionless Hetzner post-install files, and the sample env file.
+# Covers what a user is told to download and run: the shell scripts, the two
+# extensionless Hetzner post-install files, and the sample env file. Test
+# helpers are not in the list, nobody fetches those from a release.
 #
 # Usage:
 #   ./scripts/make-checksums.sh              # print to stdout
@@ -28,7 +29,8 @@ while IFS= read -r line; do
   files+=("$line")
 done < <(
   {
-    find . -path ./.git -prune -o -path ./.history -prune -o -name '*.sh' -type f -print
+    find . -path ./.git -prune -o -path ./.history -prune -o -path ./tests -prune \
+         -o -name '*.sh' -type f -print
     printf '%s\n' ./hetzner/pve ./hetzner/pbs ./install-post.env.sample
   } | sed 's|^\./||' | sort -u
 )
