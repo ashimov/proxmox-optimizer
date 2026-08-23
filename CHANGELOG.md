@@ -11,6 +11,33 @@ Went through the whole tree again, this time reading the shell scripts and the
 roles side by side. Most of what came out of it is below. Read the breaking
 section before upgrading an existing host.
 
+### Added
+
+- Release pipeline. Tagging `v*` builds `SHA256SUMS` over every script, signs it
+  with cosign keyless and opens a draft release. `scripts/make-checksums.sh`
+  builds the same list locally. The README instructions finally point at
+  something that exists.
+- Five roles for the things this repo never touched, all shipped switched off:
+  - `proxmox_ssh`. A fresh Proxmox lets root in over SSH with a password. This
+    sets keys-only, tightens the usual knobs, and refuses to disable password
+    logins when root has no authorized_keys. `sshd -t` runs before any restart.
+  - `proxmox_updates`. unattended-upgrades for Debian security updates only.
+    Proxmox repo updates stay manual, and the cluster packages are blacklisted.
+  - `proxmox_firewall`. pve-firewall with the management ports limited to the
+    networks you list. It refuses to enable the firewall if the address you are
+    connected from is not one of them.
+  - `proxmox_notifications`. ZED on a degraded pool, smartd on a failing disk,
+    root's mail pointed at a real address, `root@pam` given that address, and an
+    optional smarthost.
+  - `proxmox_backup`. Attaches a Proxmox Backup Server, creates a vzdump job,
+    and by default fails on a host that has no backup job at all.
+- Test fixture in `tests/fixture`. The roles abort on anything that is not
+  Proxmox, so until now CI never evaluated a single task. The fixture fakes
+  `/etc/pve` and the `pve*` binaries, and a new workflow runs the whole of
+  `proxmox.yml` in check mode plus a set of rendering assertions. It found four
+  bugs on the first run, listed below.
+- `ansible/requirements.txt` for the control node.
+
 ### Breaking
 
 - Tinc network renamed to `pvemesh`. Config is now in `/etc/tinc/pvemesh` and
@@ -81,6 +108,22 @@ section before upgrading an existing host.
 
 ### Fixed
 
+Found by the new fixture on its first runs:
+
+- Roles took their `xs_*` toggles from `group_vars/all.yml` only, so pointing
+  ansible at any other inventory failed with "xs_noaptlang is undefined" on the
+  sixth task. `proxmox_base` and `provider_hetzner` now carry their own defaults.
+- `meta: end_role` needs ansible-core 2.18. The project supports 2.16, so
+  `proxmox_nvidia` would have failed for anyone on the declared version range.
+  Role guards moved to `when:` on the role entry.
+- `netaddr` was never declared anywhere, and `ansible.utils.ipaddr` needs it.
+  The networking, firewall and provider roles stop without it.
+- `stdout_callback = yaml` resolves to `community.general.yaml`, which was
+  removed in community.general 12. Switched to the builtin default plus
+  `callback_result_format`, which does not depend on a collection version.
+
+And the rest:
+
 - Two `replace` tasks in `proxmox_base` used `\\s` and `\\[` inside single-quoted
   YAML, so the regex reaching Python had literal backslashes in it and matched
   nothing. Both "normalize signed-by" tasks were no-ops that reported ok.
@@ -141,6 +184,10 @@ section before upgrading an existing host.
   from 1.0.3). The tree is clean at that level, and it now also covers
   `hetzner/pve` and `hetzner/pbs`, which have no `.sh` extension and were being
   skipped.
+- New `fixture` workflow: builds a fake Proxmox host in a Debian container and
+  runs `proxmox.yml` in check mode end to end, plus assertions on the templates
+  and the mdstat parsing.
+- New `release` workflow, described above.
 - Molecule verify got a `--list-hosts` gate that fails when a playbook matches
   no hosts, a regression test for the `signed-by` regexes, and a check that the
   old project identifiers do not come back.

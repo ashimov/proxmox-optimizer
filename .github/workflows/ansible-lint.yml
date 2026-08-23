@@ -32,7 +32,7 @@ jobs:
 
       - name: Install ansible-lint
         run: |
-          pip install 'ansible>=9,<11' 'ansible-lint>=24'
+          pip install -r ansible/requirements.txt 'ansible-lint>=24'
 
       - name: Cache Ansible collections
         id: cache

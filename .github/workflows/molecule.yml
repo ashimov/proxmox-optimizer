@@ -32,7 +32,7 @@ jobs:
 
       - name: Install molecule
         run: |
-          pip install 'ansible>=9,<11' 'ansible-lint>=24' 'molecule>=24' 'molecule-plugins>=23'
+          pip install -r ansible/requirements.txt 'ansible-lint>=24' 'molecule>=24' 'molecule-plugins>=23'
 
       - name: Cache Ansible collections
         id: cache

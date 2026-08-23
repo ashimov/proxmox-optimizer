@@ -1,0 +1,30 @@
+---
+# Defaults for proxmox_notifications
+#
+# Without this a degraded pool, a failed backup or a dying disk are things you
+# find out about later, by accident.
+
+proxmox_notifications_manage: "no"
+
+# Where alerts go. Nothing is configured while this is empty.
+proxmox_notifications_email: ""
+
+# Point root's mail at that address and set it on root@pam in Proxmox
+proxmox_notifications_set_root_alias: true
+proxmox_notifications_set_pve_user_email: true
+
+# ZFS event daemon: notify on pool errors, resilver and scrub results
+proxmox_notifications_zed: true
+proxmox_notifications_zed_verbose: false
+
+# smartmontools: watch the disks and mail on failures
+proxmox_notifications_smartd: true
+# DEVICESCAN directive. -a is all standard checks, -o on for offline testing.
+proxmox_notifications_smartd_options: "-a -o on -S on -s (S/../.././02|L/../../6/03)"
+
+# Relay outgoing mail through a smarthost instead of delivering locally.
+# Put the password in a vault file, never here.
+proxmox_notifications_relayhost: ""
+proxmox_notifications_relay_user: ""
+proxmox_notifications_relay_password: ""
+proxmox_notifications_relay_port: 587

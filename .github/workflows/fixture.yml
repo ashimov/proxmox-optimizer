@@ -1,0 +1,60 @@
+---
+name: fixture
+
+# Runs the playbooks against a fake Proxmox host. Without this the roles abort
+# on the first task ("this is not Proxmox") and nothing below it is ever
+# evaluated, which is how a regex that matches nothing and a playbook with no
+# hosts both reached main.
+"on":
+  push:
+    branches: [master, main]
+    paths:
+      - 'ansible/**'
+      - 'tests/**'
+      - '.github/workflows/fixture.yml'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'ansible/**'
+      - 'tests/**'
+      - '.github/workflows/fixture.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: debian:12
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            python3-venv python3-apt iproute2 procps git ca-certificates
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Install ansible
+        run: |
+          # --system-site-packages: the apt module needs python3-apt
+          python3 -m venv --system-site-packages /venv
+          /venv/bin/pip -q install -r ansible/requirements.txt
+          echo "/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install collections
+        run: ansible-galaxy collection install -r ansible/collections/requirements.yml
+
+      - name: Build the fixture
+        run: tests/fixture/setup.sh
+
+      - name: Rendering and parsing checks
+        working-directory: ./ansible
+        run: ansible-playbook -i ../tests/fixture/inventory.ini ../tests/fixture/assert-render.yml
+
+      - name: Run proxmox.yml in check mode
+        working-directory: ./ansible
+        run: ansible-playbook -i ../tests/fixture/inventory.ini playbooks/proxmox.yml --check --diff

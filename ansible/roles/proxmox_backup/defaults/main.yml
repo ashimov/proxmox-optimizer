@@ -1,0 +1,34 @@
+---
+# Defaults for proxmox_backup
+#
+# The tuning role makes vzdump faster. This one makes sure there is actually a
+# backup job, and optionally attaches a Proxmox Backup Server.
+
+proxmox_backup_manage: "no"
+
+# --- Proxmox Backup Server storage (optional) ---
+# Leave the server empty to skip PBS entirely.
+proxmox_backup_pbs_server: ""
+proxmox_backup_pbs_storage_id: "pbs"
+proxmox_backup_pbs_datastore: ""
+proxmox_backup_pbs_username: ""
+# Put this in a vault file
+proxmox_backup_pbs_password: ""
+# From 'proxmox-backup-manager cert info' on the PBS host
+proxmox_backup_pbs_fingerprint: ""
+
+# --- vzdump job ---
+proxmox_backup_job_enabled: true
+# Storage the job writes to. Defaults to the PBS storage when one is configured.
+proxmox_backup_job_storage: ""
+# Cron-style schedule in systemd calendar format
+proxmox_backup_job_schedule: "02:30"
+proxmox_backup_job_selection: "all"     # "all" or a list of VMIDs
+proxmox_backup_job_mode: "snapshot"     # snapshot, suspend or stop
+proxmox_backup_job_compress: "zstd"
+proxmox_backup_job_mailto: ""
+proxmox_backup_job_mailnotification: "failure"
+proxmox_backup_job_comment: "Managed by Ansible"
+
+# Fail the play when no backup job exists at all
+proxmox_backup_require_job: true

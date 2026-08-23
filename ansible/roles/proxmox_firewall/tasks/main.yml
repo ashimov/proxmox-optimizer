@@ -1,0 +1,91 @@
+---
+- name: Validate firewall variables
+  ansible.builtin.assert:
+    that:
+      - proxmox_firewall_policy_in in ['ACCEPT', 'DROP', 'REJECT']
+      - proxmox_firewall_policy_out in ['ACCEPT', 'DROP', 'REJECT']
+      - proxmox_firewall_management_ports | length > 0
+    fail_msg: "Invalid proxmox_firewall_* values"
+    quiet: true
+
+- name: Require management networks before enabling the firewall
+  ansible.builtin.assert:
+    that:
+      - proxmox_firewall_management_networks | length > 0
+    fail_msg: >-
+      proxmox_firewall_enable is true but proxmox_firewall_management_networks is
+      empty. With policy_in {{ proxmox_firewall_policy_in }} that locks everyone out.
+    quiet: true
+  when: proxmox_firewall_enable | bool
+
+- name: Validate every network is a CIDR
+  ansible.builtin.assert:
+    that:
+      - item | ansible.utils.ipaddr('net')
+    fail_msg: "Not a valid network: {{ item }}"
+    quiet: true
+  loop: "{{ proxmox_firewall_management_networks + proxmox_firewall_cluster_networks }}"
+  when: (proxmox_firewall_management_networks + proxmox_firewall_cluster_networks) | length > 0
+
+- name: Find the address this play is connecting from
+  ansible.builtin.set_fact:
+    proxmox_firewall_peer_ip: "{{ (ansible_env.SSH_CLIENT | default('')).split() | first | default('') }}"
+
+# The most common way to lose a hypervisor is to enable a firewall from an
+# address the firewall does not allow.
+- name: Check that the current SSH client is inside a management network
+  ansible.builtin.assert:
+    that:
+      - proxmox_firewall_peer_ip is ansible.utils.in_any_network(proxmox_firewall_management_networks)
+    fail_msg: >-
+      You are connected from {{ proxmox_firewall_peer_ip }}, which is not inside
+      {{ proxmox_firewall_management_networks | join(', ') }}. Enabling the firewall
+      would cut this session. Add the network, or set
+      proxmox_firewall_skip_self_check=true if you are running this from elsewhere.
+    quiet: true
+  when:
+    - proxmox_firewall_enable | bool
+    - not (proxmox_firewall_skip_self_check | bool)
+    - proxmox_firewall_peer_ip | length > 0
+
+- name: Ensure the firewall directory exists
+  ansible.builtin.file:
+    path: /etc/pve/firewall
+    state: directory
+    mode: "0755"
+
+- name: Write the cluster firewall configuration
+  ansible.builtin.template:
+    src: cluster.fw.j2
+    dest: /etc/pve/firewall/cluster.fw
+    mode: "0640"
+    backup: true
+  register: proxmox_firewall_config
+
+- name: Compile the ruleset
+  ansible.builtin.command: pve-firewall compile
+  register: proxmox_firewall_compile
+  changed_when: false
+  failed_when: proxmox_firewall_compile.rc != 0
+  when: not ansible_check_mode
+
+- name: Enable the pve-firewall service
+  ansible.builtin.systemd:
+    name: pve-firewall
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Reload the ruleset
+  ansible.builtin.command: pve-firewall restart
+  changed_when: true
+  when:
+    - proxmox_firewall_config.changed
+    - not ansible_check_mode
+
+- name: Report firewall state
+  ansible.builtin.debug:
+    msg: >-
+      Firewall {{ 'ENABLED' if proxmox_firewall_enable | bool else 'written but not enabled' }}.
+      Management networks: {{ proxmox_firewall_management_networks | join(', ') | default('none', true) }}.
+      Ports: {{ proxmox_firewall_management_ports | join(', ') }}.

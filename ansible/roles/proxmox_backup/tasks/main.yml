@@ -1,0 +1,128 @@
+---
+- name: Validate backup settings
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_job_mode in ['snapshot', 'suspend', 'stop']
+      - proxmox_backup_job_mailnotification in ['always', 'failure']
+      - proxmox_backup_pbs_storage_id is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+      - proxmox_backup_job_mailto | length == 0 or proxmox_backup_job_mailto is match('^[^@[:space:]]+@[^@[:space:]]+$')
+    fail_msg: "Invalid proxmox_backup_* values"
+    quiet: true
+
+- name: Configure the Proxmox Backup Server storage
+  when: proxmox_backup_pbs_server | length > 0
+  block:
+    - name: Require the PBS details
+      ansible.builtin.assert:
+        that:
+          - proxmox_backup_pbs_datastore | length > 0
+          - proxmox_backup_pbs_username | length > 0
+          - proxmox_backup_pbs_password | length > 0
+          - proxmox_backup_pbs_fingerprint | length > 0
+        fail_msg: >-
+          proxmox_backup_pbs_server is set, so datastore, username, password and
+          fingerprint are all required. Get the fingerprint from
+          'proxmox-backup-manager cert info' on the PBS host.
+        quiet: true
+
+    - name: List configured storages
+      ansible.builtin.command: pvesm status --storage {{ proxmox_backup_pbs_storage_id }}
+      register: proxmox_backup_storage_check
+      changed_when: false
+      failed_when: false
+
+    - name: Add the PBS storage
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - add
+          - pbs
+          - "{{ proxmox_backup_pbs_storage_id }}"
+          - --server
+          - "{{ proxmox_backup_pbs_server }}"
+          - --datastore
+          - "{{ proxmox_backup_pbs_datastore }}"
+          - --username
+          - "{{ proxmox_backup_pbs_username }}"
+          - --password
+          - "{{ proxmox_backup_pbs_password }}"
+          - --fingerprint
+          - "{{ proxmox_backup_pbs_fingerprint }}"
+          - --content
+          - backup
+      no_log: true
+      when:
+        - proxmox_backup_storage_check.rc != 0
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Check the storage answers
+      ansible.builtin.command: pvesm status --storage {{ proxmox_backup_pbs_storage_id }}
+      register: proxmox_backup_storage_status
+      changed_when: false
+      failed_when: proxmox_backup_storage_status.rc != 0
+      when: not ansible_check_mode
+
+- name: Decide which storage the job writes to
+  ansible.builtin.set_fact:
+    proxmox_backup_target: >-
+      {{ proxmox_backup_job_storage
+         if proxmox_backup_job_storage | length > 0
+         else (proxmox_backup_pbs_storage_id if proxmox_backup_pbs_server | length > 0 else '') }}
+
+- name: List existing backup jobs
+  ansible.builtin.command: pvesh get /cluster/backup --output-format json
+  register: proxmox_backup_jobs
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Parse existing jobs
+  ansible.builtin.set_fact:
+    proxmox_backup_existing: "{{ (proxmox_backup_jobs.stdout | default('[]') | from_json) }}"
+  when: not ansible_check_mode
+
+- name: Create a backup job
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'create', '/cluster/backup',
+          '--storage', proxmox_backup_target,
+          '--schedule', proxmox_backup_job_schedule,
+          '--mode', proxmox_backup_job_mode,
+          '--compress', proxmox_backup_job_compress,
+          '--enabled', '1',
+          '--comment', proxmox_backup_job_comment]
+         + (['--all', '1'] if proxmox_backup_job_selection == 'all'
+            else ['--vmid', proxmox_backup_job_selection | join(',')])
+         + (['--mailto', proxmox_backup_job_mailto,
+             '--mailnotification', proxmox_backup_job_mailnotification]
+            if proxmox_backup_job_mailto | length > 0 else []) }}
+  when:
+    - proxmox_backup_job_enabled | bool
+    - proxmox_backup_target | length > 0
+    - not ansible_check_mode
+    - proxmox_backup_existing | default([]) | selectattr('comment', 'defined')
+      | selectattr('comment', 'equalto', proxmox_backup_job_comment) | list | length == 0
+  changed_when: true
+
+# A hypervisor with no backup job is worth knowing about, whether or not this
+# role is the thing that creates it.
+- name: Fail when no backup job exists at all
+  ansible.builtin.fail:
+    msg: >-
+      No vzdump job is configured on {{ inventory_hostname }}. Set
+      proxmox_backup_job_storage (or the PBS variables), or set
+      proxmox_backup_require_job=false to accept that.
+  when:
+    - proxmox_backup_require_job | bool
+    - not ansible_check_mode
+    - proxmox_backup_existing | default([]) | length == 0
+    - not (proxmox_backup_job_enabled | bool and proxmox_backup_target | length > 0)
+
+- name: Report backup configuration
+  ansible.builtin.debug:
+    msg: >-
+      Backup target: {{ proxmox_backup_target | default('none', true) }},
+      schedule {{ proxmox_backup_job_schedule }},
+      existing jobs: {{ proxmox_backup_existing | default([]) | length }}.
+      A backup you have not restored from is not a backup: test one.

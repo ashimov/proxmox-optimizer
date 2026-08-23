@@ -1,0 +1,39 @@
+---
+# Fixture overrides.
+#
+# The point is to walk through the task logic, not to install Proxmox packages
+# on a plain Debian container. Anything that only exists in the PVE repositories
+# is switched off here; everything else runs for real in check mode.
+
+# PVE-only packages (pve-headers, proxmox-backup-restore-image, ksm-control-daemon)
+xs_base_packages: []
+xs_apt_dependencies:
+  - ca-certificates
+  - curl
+xs_kernelheaders: "no"
+xs_ksmtuned: "no"
+
+# Needs the CISofy repository, which the fixture does not add
+xs_lynis: "no"
+
+# Slow or destructive, and not what we are testing
+xs_aptupgrade: "no"
+xs_utils: "no"
+xs_ceph: "no"
+xs_zfsautosnapshot: "no"
+xs_entropy: "no"
+
+proxmox_configure_networking: "no"
+proxmox_provider: ""
+
+# New roles: exercise the templates without touching a real host
+proxmox_ssh_manage: "no"
+proxmox_firewall_manage: "yes"
+proxmox_firewall_enable: false
+proxmox_firewall_management_networks:
+  - "203.0.113.0/24"
+proxmox_updates_manage: "yes"
+proxmox_notifications_manage: "yes"
+proxmox_notifications_email: ""
+proxmox_backup_manage: "yes"
+proxmox_backup_require_job: false

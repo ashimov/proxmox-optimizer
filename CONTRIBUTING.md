@@ -137,6 +137,11 @@ fi
 
 ### Ansible
 
+- Roles carry their own defaults. Putting a variable only in
+  `group_vars/all.yml` means the role breaks the moment someone uses their own
+  inventory.
+- `meta: end_role` needs ansible-core 2.18. This project supports 2.16, so guard
+  a role with `when:` on the role entry in the playbook instead.
 - One source of truth per behaviour. If a shell script and a role do the same
   thing, change both in the same commit.
 - Validate anything from inventory before templating it into a config file or
@@ -183,6 +188,7 @@ shellcheck hetzner/pve hetzner/pbs
 yamllint -c .yamllint.yml ansible/ .github/workflows/
 
 # ansible
+pip install -r ansible/requirements.txt
 cd ansible
 ansible-lint -c ../.ansible-lint playbooks/ roles/
 molecule test --scenario-name default
@@ -191,6 +197,23 @@ molecule test --scenario-name default
 Molecule syntax-checks every playbook, resolves each one against
 `inventory/hosts.ini.example` and fails if a play matches no hosts. If you add a
 playbook, add it to `molecule/default/verify.yml` too.
+
+The fixture job runs the playbooks against a fake Proxmox host, which is the
+only way most task logic gets exercised at all:
+
+```bash
+docker run --rm -v "$PWD:/repo" -w /repo debian:12 bash -c '
+  apt-get update -qq && apt-get install -y -qq python3-venv python3-apt iproute2 procps >/dev/null
+  python3 -m venv --system-site-packages /venv
+  /venv/bin/pip -q install -r ansible/requirements.txt
+  export PATH=/venv/bin:$PATH
+  ansible-galaxy collection install -r ansible/collections/requirements.yml
+  tests/fixture/setup.sh && tests/fixture/run.sh'
+```
+
+See `tests/fixture/README.md`. If you add something that renders a template or
+parses command output, add an assertion to `tests/fixture/assert-render.yml`:
+those are the failures that otherwise report ok and do nothing.
 
 ### Destructive scripts
 

@@ -103,7 +103,13 @@ For repeatable, idempotent automation, use the Ansible roles and playbooks in `a
 
 - Full `ansible` package (ansible-core is not supported)
 - Python 3.11+
-- Collections: `ansible.utils`, `ansible.posix`
+- `netaddr` on the control node, needed by the `ipaddr` filter
+- Collections: `ansible.utils`, `ansible.posix`, `community.general`
+
+```bash
+pip install -r ansible/requirements.txt
+ansible-galaxy collection install -r ansible/collections/requirements.yml
+```
 
 ### Quick Start
 
@@ -130,6 +136,11 @@ ansible-playbook playbooks/proxmox.yml -i inventory/hosts.ini
 | `proxmox_tuning`        | Sysctl, journald, KSM, MOTD, limits        |
 | `proxmox_zfs`           | ZFS ARC tuning, auto-snapshots             |
 | `proxmox_vfio`          | IOMMU, VFIO for PCIe passthrough           |
+| `proxmox_ssh`           | sshd policy, keys instead of passwords     |
+| `proxmox_updates`       | unattended security updates                |
+| `proxmox_firewall`      | pve-firewall rules for the management ports|
+| `proxmox_notifications` | Mail alerts from ZFS, smartd and Proxmox   |
+| `proxmox_backup`        | PBS storage and a vzdump job               |
 | `proxmox_networking`    | vmbr0 routed bridge configuration          |
 | `proxmox_lxc_docker`    | Docker support for LXC containers          |
 | `proxmox_nvidia`        | NVIDIA Container Toolkit for Docker        |
@@ -202,6 +213,43 @@ ZFS_DRYRUN=yes ./zfs/createzfs.sh hdd /dev/sda /dev/sdb   # prints, changes noth
 LXC_DOCKER_CONFIRM=yes pve-enable-lxc-docker 100
 INSTALL_CONFIRM=yes ./hetzner/installimage-proxmox.sh host.example.com
 ```
+
+### Hardening (opt-in)
+
+Five roles are shipped switched off, because turning them on changes how the
+host behaves and two of them can lock you out. Enable them deliberately:
+
+```yaml
+# inventory/group_vars/all.yml
+proxmox_ssh_manage: "yes"           # keys instead of passwords
+proxmox_updates_manage: "yes"       # unattended security updates
+proxmox_firewall_manage: "yes"      # pve-firewall
+proxmox_firewall_enable: true
+proxmox_firewall_management_networks: ["203.0.113.0/24"]
+proxmox_notifications_manage: "yes"
+proxmox_notifications_email: "alerts@example.com"
+proxmox_backup_manage: "yes"
+```
+
+Both risky ones refuse to shoot you in the foot:
+
+- `proxmox_ssh` will not disable password logins when root has no
+  `authorized_keys`, and runs `sshd -t` before anything is restarted.
+- `proxmox_firewall` will not enable the firewall if the address you are
+  connected from is outside the management networks you listed.
+
+Run them with `--check --diff` first, and keep a console open.
+
+```bash
+ansible-playbook playbooks/proxmox.yml --tags security --check --diff
+ansible-playbook playbooks/proxmox.yml --tags security
+```
+
+`proxmox_notifications` covers the part people notice only when it is missing:
+ZED mails on a degraded pool, smartd mails on a failing disk, root's mail goes
+to a real address, and `root@pam` gets that address in Proxmox.
+`proxmox_backup` attaches a Proxmox Backup Server, creates a vzdump job, and by
+default fails the play on a host that has no backup job at all.
 
 ### Tinc VPN Mesh Setup
 
@@ -675,16 +723,28 @@ For security, always verify downloaded scripts before execution. Use SHA256 chec
 
 ### Verifying Scripts
 
+Every release ships a `SHA256SUMS` covering all the scripts, signed with cosign
+keyless so the list itself can be checked:
+
 ```bash
-# Download the script
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh
+RELEASE=v1.0.4
+BASE="https://github.com/ashimov/proxmox-optimizer/releases/download/${RELEASE}"
+wget "${BASE}/SHA256SUMS" "${BASE}/SHA256SUMS.sig" "${BASE}/SHA256SUMS.pem"
 
-# Generate checksum and compare with published value
-sha256sum install-post.sh
+# optional but recommended: is this checksum list actually ours?
+cosign verify-blob \
+  --certificate SHA256SUMS.pem \
+  --signature SHA256SUMS.sig \
+  --certificate-identity-regexp '^https://github.com/ashimov/proxmox-optimizer/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
 
-# Or verify in one command (replace EXPECTED_CHECKSUM with actual value)
-echo "EXPECTED_CHECKSUM  install-post.sh" | sha256sum -c -
+# then the scripts you downloaded
+sha256sum --ignore-missing -c SHA256SUMS
 ```
+
+`scripts/make-checksums.sh` produces the same list locally if you want to
+compare against a checkout.
 
 ### Environment Variables for Checksum Verification
 

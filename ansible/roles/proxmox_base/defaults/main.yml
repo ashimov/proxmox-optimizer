@@ -1,4 +1,21 @@
 ---
+# Toggles. group_vars/all.yml overrides these; they live here too so the role
+# still works when someone points ansible at their own inventory.
+xs_lang: "en_US.UTF-8"
+xs_noaptlang: "yes"
+xs_aptipv4: "yes"
+xs_aptupgrade: "yes"
+xs_utils: "yes"
+xs_kernelheaders: "yes"
+xs_noentrepo: "yes"
+xs_testrepo: "no"
+xs_openvswitch: "no"
+xs_ifupdown2: "yes"
+xs_timesync: "yes"
+xs_timezone: ""
+xs_guestagent: "yes"
+xs_ceph: "no"
+
 xs_utils_packages:
   - axel
   - build-essential

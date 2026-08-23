@@ -1,0 +1,19 @@
+# Managed by Ansible (proxmox_ssh). Local edits will be overwritten.
+Port {{ proxmox_ssh_port }}
+PermitRootLogin {{ proxmox_ssh_permit_root_login }}
+PasswordAuthentication {{ proxmox_ssh_password_authentication }}
+KbdInteractiveAuthentication {{ proxmox_ssh_password_authentication }}
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+MaxAuthTries {{ proxmox_ssh_max_auth_tries }}
+LoginGraceTime {{ proxmox_ssh_login_grace_time }}
+X11Forwarding {{ proxmox_ssh_x11_forwarding }}
+AllowTcpForwarding {{ proxmox_ssh_allow_tcp_forwarding }}
+ClientAliveInterval {{ proxmox_ssh_client_alive_interval }}
+ClientAliveCountMax {{ proxmox_ssh_client_alive_count_max }}
+{% if proxmox_ssh_allow_groups | length > 0 %}
+AllowGroups {{ proxmox_ssh_allow_groups | join(' ') }}
+{% endif %}
+{% for line in proxmox_ssh_extra_config %}
+{{ line }}
+{% endfor %}

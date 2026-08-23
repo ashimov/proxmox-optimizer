@@ -2,10 +2,6 @@
 # proxmox_nvidia role - Install the NVIDIA Container Toolkit
 # ============================================================================
 
-- name: Skip if NVIDIA container runtime not enabled
-  ansible.builtin.meta: end_role
-  when: not nvidia_docker_enabled
-
 - name: Ensure gnupg and curl are installed
   ansible.builtin.apt:
     name:

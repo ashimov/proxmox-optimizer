@@ -1,0 +1,36 @@
+# Managed by Ansible (proxmox_firewall). Local edits will be overwritten.
+[OPTIONS]
+
+enable: {{ 1 if proxmox_firewall_enable | bool else 0 }}
+policy_in: {{ proxmox_firewall_policy_in }}
+policy_out: {{ proxmox_firewall_policy_out }}
+
+[IPSET management]
+
+{% for net in proxmox_firewall_management_networks %}
+{{ net }}
+{% endfor %}
+
+{% if proxmox_firewall_cluster_networks | length > 0 %}
+[IPSET cluster]
+
+{% for net in proxmox_firewall_cluster_networks %}
+{{ net }}
+{% endfor %}
+
+{% endif %}
+[RULES]
+
+{% for port in proxmox_firewall_management_ports %}
+IN ACCEPT -source +management -p tcp -dport {{ port }} -log nolog
+{% endfor %}
+{% if proxmox_firewall_cluster_networks | length > 0 %}
+IN ACCEPT -source +cluster -log nolog
+{% endif %}
+{% for port in proxmox_firewall_public_ports %}
+IN ACCEPT -p tcp -dport {{ port }} -log nolog
+{% endfor %}
+IN ACCEPT -p icmp -log nolog
+{% for rule in proxmox_firewall_extra_rules %}
+{{ rule }}
+{% endfor %}

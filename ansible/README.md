@@ -1,48 +1,62 @@
-# Ansible Migration
+# Ansible
 
-This directory contains the Ansible-based replacement for the current shell scripts.
-Core roles are fully implemented, and remaining features are tracked in `ROADMAP.md` at the repo root.
+Roles and playbooks for setting up and maintaining Proxmox hosts. This is where
+new work goes: the shell scripts stay for the cases where Ansible cannot run
+yet, such as a rescue system or a Debian box that is not Proxmox yet.
 
 ## Quick Start
 
-Requires the full `ansible` package (ansible-core is not supported).
-
-1) Edit `ansible/inventory/hosts.ini` with your Proxmox hosts
-2) Adjust variables in `ansible/inventory/group_vars/all.yml`
-3) Install required collections:
+Needs the full `ansible` package, not just ansible-core, plus `netaddr` on the
+control node. Without netaddr the `ipaddr` filter fails and the networking,
+firewall and provider roles stop.
 
 ```bash
+pip install -r ansible/requirements.txt
 cd ansible
 ansible-galaxy collection install -r collections/requirements.yml
-```
 
-Required collections: `ansible.utils`, `ansible.posix`.
+cp inventory/hosts.ini.example inventory/hosts.ini   # hosts.ini is git-ignored
+$EDITOR inventory/hosts.ini
+$EDITOR inventory/group_vars/all.yml
 
-4) Run:
-
-```bash
-cd ansible
+ansible-playbook playbooks/proxmox.yml --check --diff   # look first
 ansible-playbook playbooks/proxmox.yml
 ```
+
+Collections: `ansible.utils`, `ansible.posix`, `community.general`.
 
 ## Roles
 
 | Role | Description | Status |
 |------|-------------|--------|
-| `proxmox_base` | Repos, base packages, core APT config | ✅ 100% |
-| `proxmox_security` | Fail2ban, Lynis, rpcbind | ✅ 100% |
-| `proxmox_tuning` | Sysctl, journald, logrotate, KSM, MOTD, bashrc | ✅ 100% |
-| `proxmox_zfs` | ZFS ARC tuning and optional auto-snapshot | ✅ 100% |
-| `proxmox_vfio` | IOMMU and VFIO modules/blacklists | ✅ 100% |
-| `proxmox_networking` | vmbr0 routed bridge (opt-in) | ✅ 100% |
-| `proxmox_lxc_docker` | Docker support for LXC containers (opt-in, security warning) | ✅ 100% |
-| `proxmox_nvidia` | NVIDIA Docker runtime for GPU passthrough | ✅ 100% |
-| `proxmox_zfs_slog_cache` | Convert MD RAID to ZFS SLOG/cache (destructive) | ✅ 100% |
-| `proxmox_tinc_vpn` | Tinc VPN mesh network for Proxmox clusters | ✅ 100% |
-| `provider_ovh` | OVH RTM installer with auto-detection | ✅ 100% |
-| `provider_hetzner` | Hetzner network tuning and Storage Box | ✅ 100% |
+| `proxmox_base` | Repos, base packages, core APT config | in `proxmox.yml` |
+| `proxmox_security` | Fail2ban and Lynis, rpcbind off | in `proxmox.yml` |
+| `proxmox_tuning` | Sysctl, journald, logrotate, KSM, MOTD, bashrc | in `proxmox.yml` |
+| `proxmox_zfs` | ZFS ARC tuning and optional auto-snapshot | in `proxmox.yml` |
+| `proxmox_vfio` | IOMMU and VFIO modules/blacklists | in `proxmox.yml` |
+| `proxmox_ssh` | sshd policy, keys over passwords | opt-in |
+| `proxmox_updates` | unattended-upgrades for security updates | opt-in |
+| `proxmox_firewall` | pve-firewall ruleset for the management ports | opt-in |
+| `proxmox_notifications` | Mail alerts: ZED, smartd, root alias, PVE user | opt-in |
+| `proxmox_backup` | PBS storage and a vzdump job, checks one exists | opt-in |
+| `proxmox_networking` | vmbr0 routed bridge | opt-in |
+| `proxmox_lxc_docker` | Docker inside LXC (drops isolation) | opt-in |
+| `proxmox_nvidia` | NVIDIA Container Toolkit | standalone playbook |
+| `proxmox_zfs_slog_cache` | Convert MD RAID to ZFS SLOG/cache (destructive) | standalone playbook |
+| `proxmox_tinc_vpn` | Tinc VPN mesh between nodes | standalone playbook |
+| `provider_ovh` | OVH RTM installer with auto-detection | via `proxmox_provider` |
+| `provider_hetzner` | Hetzner network tuning and Storage Box | via `proxmox_provider` |
 
 ## Safety
+
+The five roles marked opt-in above do nothing until you set their `*_manage`
+variable to `"yes"`. Two of them can lock you out of a remote host, so read the
+defaults before switching them on:
+
+- `proxmox_ssh` refuses to disable password logins when root has no
+  `authorized_keys`, and validates the config with `sshd -t` before restarting.
+- `proxmox_firewall` refuses to enable the firewall when the address you are
+  connected from is outside `proxmox_firewall_management_networks`.
 
 - Networking changes are **opt-in**. Set `proxmox_configure_networking: "yes"` and
   define the required variables.

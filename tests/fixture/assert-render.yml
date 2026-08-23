@@ -1,0 +1,174 @@
+---
+# Checks the things that fail silently: a regex that matches nothing, a parse
+# that returns an empty list, a template that renders the wrong value. None of
+# these show up as an error, they just quietly do nothing.
+- name: Rendering and parsing checks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    repo_root: "{{ playbook_dir }}/../.."
+
+    sample_list_line: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/old.gpg]
+      https://download.proxmox.com/debian/pve bookworm pve-no-subscription
+    sample_sources_line: "Signed-By: /etc/apt/keyrings/old.gpg"
+    list_regex: '^(deb\s+\[[^\]]*?)signed-by=[^\s\]]+'
+    sources_regex: '^Signed-By:\s*\S+'
+
+    sample_mdstat: |
+      Personalities : [raid1]
+      md2 : active (auto-read-only) raid1 sda3[0] sdb3[1]
+            1046528 blocks super 1.2 [2/2] [UU]
+
+      md3 : active raid1 sda4[0] sdb4[1]
+            976630464 blocks super 1.2 [2/2] [UU]
+      unused devices: <none>
+
+  tasks:
+    - name: The signed-by regexes match a real repo line
+      ansible.builtin.assert:
+        that:
+          - sample_list_line is search(list_regex)
+          - sample_sources_line is search(sources_regex)
+          - sample_list_line | regex_replace(list_regex, '\1signed-by=/usr/share/keyrings/new.gpg')
+            is search('signed-by=/usr/share/keyrings/new.gpg')
+        fail_msg: >-
+          proxmox_base signed-by normalisation does not match a standard repo
+          line. Check the backslash quoting in the task.
+        quiet: true
+
+    # "md2 : active (auto-read-only) raid1 sda3[0]" shifts the columns, which is
+    # what broke the old positional parser.
+    - name: mdstat parsing survives a shifted line
+      vars:
+        md_line: '{{ sample_mdstat | regex_search("(?m)^md2 :.*$") | default("", true) }}'
+        md_members: '{{ (sample_mdstat | regex_search("(?m)^md2 :.*$") | default("", true))
+                        | regex_findall("([a-zA-Z0-9]+)\[[0-9]+\]")
+                        | map("regex_replace", "^", "/dev/") | list }}'
+      ansible.builtin.assert:
+        that:
+          - md_line | length > 0
+          - md_members == ['/dev/sda3', '/dev/sdb3']
+        fail_msg: "mdstat parsing returned {{ md_members }}, expected the two member devices"
+        quiet: true
+
+    - name: ZFS ARC minimum stays below the maximum at every size
+      vars:
+        arc_min: >-
+          {{ [((item | int <= 16) | ternary(268435456,
+              (item | int <= 32) | ternary(536870912, (item | int * 1073741824 / 16) | int))) | int,
+              268435456] | max }}
+        arc_max: >-
+          {{ [((item | int <= 16) | ternary(536870912,
+              (item | int <= 32) | ternary(1073741824, (item | int * 1073741824 / 8) | int))) | int,
+              536870912] | max }}
+      ansible.builtin.assert:
+        that:
+          - arc_min | int < arc_max | int
+        fail_msg: "ARC min {{ arc_min }} is not below max {{ arc_max }} for {{ item }}GB of RAM"
+        quiet: true
+      loop: [4, 8, 16, 32, 64, 128, 512]
+      loop_control:
+        label: "{{ item }}GB"
+
+    - name: Tinc config renders with pinned crypto
+      vars:
+        tinc_node_name: "node_1"
+        tinc_interface: "Tun0"
+        tinc_cipher: "aes-256-cbc"
+        tinc_digest: "sha256"
+        tinc_compression: 0
+        tinc_connect_to: "node-2"
+        rendered: "{{ lookup('template', repo_root ~ '/ansible/roles/proxmox_tinc_vpn/templates/tinc.conf.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'Cipher = aes-256-cbc' in rendered"
+          - "'Digest = sha256' in rendered"
+          - "'Compression = 0' in rendered"
+          - "'ConnectTo = node_2' in rendered"
+        fail_msg: "tinc.conf.j2 rendered without the expected crypto settings"
+        quiet: true
+
+    - name: Tinc interface config uses the subnet broadcast
+      vars:
+        tinc_interface: "Tun0"
+        tinc_vpn_subnet: "10.10.1"
+        tinc_vpn_ip_last: 3
+        rendered: "{{ lookup('template', repo_root ~ '/ansible/roles/proxmox_tinc_vpn/templates/interface.cfg.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'address 10.10.1.3' in rendered"
+          - "'broadcast 10.10.1.255' in rendered"
+        fail_msg: "interface.cfg.j2 rendered the wrong address or broadcast"
+        quiet: true
+
+    - name: Firewall config renders a usable ruleset
+      vars:
+        proxmox_firewall_enable: true
+        proxmox_firewall_policy_in: "DROP"
+        proxmox_firewall_policy_out: "ACCEPT"
+        proxmox_firewall_management_networks: ["203.0.113.0/24"]
+        proxmox_firewall_management_ports: [22, 8006]
+        proxmox_firewall_cluster_networks: []
+        proxmox_firewall_public_ports: []
+        proxmox_firewall_extra_rules: []
+        rendered: "{{ lookup('template', repo_root ~ '/ansible/roles/proxmox_firewall/templates/cluster.fw.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'enable: 1' in rendered"
+          - "'[IPSET management]' in rendered"
+          - "'203.0.113.0/24' in rendered"
+          - "'IN ACCEPT -source +management -p tcp -dport 8006' in rendered"
+        fail_msg: "cluster.fw.j2 did not render the management ruleset"
+        quiet: true
+
+    - name: The firewall lockout guard actually rejects an outside address
+      ansible.builtin.assert:
+        that:
+          - "'10.1.2.3' is ansible.utils.in_any_network(['10.0.0.0/8'])"
+          - "not ('198.51.100.7' is ansible.utils.in_any_network(['10.0.0.0/8']))"
+        fail_msg: "in_any_network is not behaving as the firewall role expects"
+        quiet: true
+
+    - name: sshd drop-in renders the intended policy
+      vars:
+        proxmox_ssh_port: 22
+        proxmox_ssh_permit_root_login: "prohibit-password"
+        proxmox_ssh_password_authentication: "no"
+        proxmox_ssh_max_auth_tries: 3
+        proxmox_ssh_login_grace_time: 30
+        proxmox_ssh_x11_forwarding: "no"
+        proxmox_ssh_allow_tcp_forwarding: "yes"
+        proxmox_ssh_client_alive_interval: 300
+        proxmox_ssh_client_alive_count_max: 2
+        proxmox_ssh_allow_groups: []
+        proxmox_ssh_extra_config: []
+        rendered: "{{ lookup('template', repo_root ~ '/ansible/roles/proxmox_ssh/templates/sshd.conf.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'PermitRootLogin prohibit-password' in rendered"
+          - "'PasswordAuthentication no' in rendered"
+          - "'PermitEmptyPasswords no' in rendered"
+          - "'AllowGroups' not in rendered"
+        fail_msg: "sshd.conf.j2 did not render the intended policy"
+        quiet: true
+
+    - name: unattended-upgrades policy keeps the cluster packages out
+      vars:
+        proxmox_updates_include_proxmox: false
+        proxmox_updates_blacklist: ["proxmox-ve", "pve-manager"]
+        proxmox_updates_mail: "root@example.com"
+        proxmox_updates_mail_report: "only-on-error"
+        proxmox_updates_auto_reboot: false
+        proxmox_updates_auto_reboot_time: "04:00"
+        rendered: "{{ lookup('template', repo_root ~ '/ansible/roles/proxmox_updates/templates/51-ashimov-unattended.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'label=Debian-Security' in rendered"
+          - "'origin=Proxmox' not in rendered"
+          - "'\"proxmox-ve\";' in rendered"
+          - "'Automatic-Reboot \"false\"' in rendered"
+        fail_msg: "51-ashimov-unattended.j2 rendered the wrong policy"
+        quiet: true

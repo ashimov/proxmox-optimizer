@@ -1,0 +1,32 @@
+---
+# Defaults for proxmox_ssh
+#
+# A fresh Proxmox install lets root log in over SSH with a password. This role
+# changes that. It refuses to lock you out: if password authentication is about
+# to be switched off and root has no authorized_keys, the play stops.
+
+proxmox_ssh_manage: "no"
+
+# "yes", "prohibit-password" (keys only, no password) or "no"
+proxmox_ssh_permit_root_login: "prohibit-password"
+
+# Password logins for everyone. Turn this off only with keys in place.
+proxmox_ssh_password_authentication: "no"
+
+# Refuse to disable password auth when root has no authorized_keys.
+# Set to false only if you have another way in (console, IPMI, other user).
+proxmox_ssh_require_authorized_keys: true
+
+proxmox_ssh_port: 22
+proxmox_ssh_max_auth_tries: 3
+proxmox_ssh_login_grace_time: 30
+proxmox_ssh_x11_forwarding: "no"
+proxmox_ssh_allow_tcp_forwarding: "yes"
+proxmox_ssh_client_alive_interval: 300
+proxmox_ssh_client_alive_count_max: 2
+
+# Restrict logins to these groups. Empty means no AllowGroups line at all.
+proxmox_ssh_allow_groups: []
+
+# Extra sshd_config lines, appended verbatim to the drop-in
+proxmox_ssh_extra_config: []

@@ -1,0 +1,156 @@
+---
+- name: Warn when no address is configured
+  ansible.builtin.debug:
+    msg: >-
+      proxmox_notifications_email is empty, so nothing is configured. Set it to
+      the address that should receive pool, backup and disk alerts.
+  when: proxmox_notifications_email | length == 0
+
+- name: Configure alerting
+  when: proxmox_notifications_email | length > 0
+  block:
+    - name: Validate the address
+      ansible.builtin.assert:
+        that:
+          - proxmox_notifications_email is match('^[^@[:space:]]+@[^@[:space:]]+$')
+          - proxmox_notifications_relayhost | length == 0 or proxmox_notifications_relayhost is match('^[A-Za-z0-9._-]+$')
+          - (proxmox_notifications_relay_port | int) > 0 and (proxmox_notifications_relay_port | int) < 65536
+        fail_msg: "Invalid proxmox_notifications_* values"
+        quiet: true
+
+    - name: Install mail tooling
+      ansible.builtin.apt:
+        name:
+          - postfix
+          - bsd-mailx
+        state: present
+
+    # Local mail to root goes nowhere useful on a headless box.
+    - name: Point root mail at the alert address
+      ansible.builtin.lineinfile:
+        path: /etc/aliases
+        regexp: '^root:'
+        line: "root: {{ proxmox_notifications_email }}"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      register: proxmox_notifications_aliases
+      when: proxmox_notifications_set_root_alias | bool
+
+    - name: Rebuild the alias database
+      ansible.builtin.command: newaliases
+      when:
+        - proxmox_notifications_aliases.changed
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Configure the smarthost
+      when: proxmox_notifications_relayhost | length > 0
+      block:
+        - name: Set the postfix relayhost
+          ansible.builtin.lineinfile:
+            path: /etc/postfix/main.cf
+            regexp: '^relayhost\s*='
+            line: "relayhost = [{{ proxmox_notifications_relayhost }}]:{{ proxmox_notifications_relay_port }}"
+          notify: Restart postfix
+
+        - name: Write the relay credentials
+          ansible.builtin.copy:
+            dest: /etc/postfix/sasl_passwd
+            content: "[{{ proxmox_notifications_relayhost }}]:{{ proxmox_notifications_relay_port }} {{ proxmox_notifications_relay_user }}:{{ proxmox_notifications_relay_password }}\n"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+          register: proxmox_notifications_sasl
+          when: proxmox_notifications_relay_user | length > 0
+
+        - name: Hash the relay credentials
+          ansible.builtin.command: postmap /etc/postfix/sasl_passwd
+          when:
+            - proxmox_notifications_sasl.changed | default(false)
+            - not ansible_check_mode
+          changed_when: true
+          notify: Restart postfix
+
+        - name: Enable SASL authentication
+          ansible.builtin.lineinfile:
+            path: /etc/postfix/main.cf
+            regexp: "^{{ item.key }}\\s*="
+            line: "{{ item.key }} = {{ item.value }}"
+          loop:
+            - {key: "smtp_sasl_auth_enable", value: "yes"}
+            - {key: "smtp_sasl_password_maps", value: "hash:/etc/postfix/sasl_passwd"}
+            - {key: "smtp_sasl_security_options", value: "noanonymous"}
+            - {key: "smtp_tls_security_level", value: "encrypt"}
+          loop_control:
+            label: "{{ item.key }}"
+          when: proxmox_notifications_relay_user | length > 0
+          notify: Restart postfix
+
+    - name: Check for ZFS
+      ansible.builtin.stat:
+        path: /sbin/zed
+      register: proxmox_notifications_zed_binary
+
+    - name: Configure the ZFS event daemon
+      when:
+        - proxmox_notifications_zed | bool
+        - proxmox_notifications_zed_binary.stat.exists
+      block:
+        - name: Write zed.rc
+          ansible.builtin.template:
+            src: zed.rc.j2
+            dest: /etc/zfs/zed.d/zed.rc
+            owner: root
+            group: root
+            mode: "0600"
+          notify: Restart zed
+
+        - name: Enable zed
+          ansible.builtin.systemd:
+            name: zfs-zed
+            enabled: true
+            state: started
+          when: not ansible_check_mode
+
+    - name: Configure smartd
+      when: proxmox_notifications_smartd | bool
+      block:
+        - name: Install smartmontools
+          ansible.builtin.apt:
+            name: smartmontools
+            state: present
+
+        - name: Write smartd.conf
+          ansible.builtin.template:
+            src: smartd.conf.j2
+            dest: /etc/smartd.conf
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Restart smartd
+
+        - name: Enable smartd
+          ansible.builtin.systemd:
+            name: smartmontools
+            enabled: true
+            state: started
+          when: not ansible_check_mode
+
+    - name: Set the email address on root@pam
+      ansible.builtin.command: "pveum user modify root@pam --email {{ proxmox_notifications_email }}"
+      register: proxmox_notifications_pveum
+      changed_when: proxmox_notifications_pveum.rc == 0
+      failed_when: false
+      when:
+        - proxmox_notifications_set_pve_user_email | bool
+        - not ansible_check_mode
+
+    - name: How to test it
+      ansible.builtin.debug:
+        msg: >-
+          Send a test message with:
+          echo test | mail -s "proxmox alert test" {{ proxmox_notifications_email }}
+          and check the journal for postfix if it does not arrive.

@@ -1,0 +1,35 @@
+---
+# Defaults for proxmox_updates
+#
+# A hypervisor nobody patches undoes the rest of the hardening. This installs
+# unattended-upgrades for Debian security updates only.
+
+proxmox_updates_manage: "no"
+
+# Install and enable unattended-upgrades
+proxmox_updates_unattended: true
+
+# Also take Proxmox repository updates automatically. Off by default: those
+# include the kernel and the cluster stack, which you want to schedule yourself.
+proxmox_updates_include_proxmox: false
+
+# Where to send failure reports. Empty means no mail.
+proxmox_updates_mail: ""
+# "on-change", "only-on-error" or "always"
+proxmox_updates_mail_report: "only-on-error"
+
+# Reboot by itself when a package asks for it
+proxmox_updates_auto_reboot: false
+proxmox_updates_auto_reboot_time: "04:00"
+
+# Packages unattended-upgrades must never touch
+proxmox_updates_blacklist:
+  - proxmox-ve
+  - pve-manager
+  - pve-cluster
+  - corosync
+
+# How often apt refreshes and downloads (in days, 0 disables)
+proxmox_updates_update_interval: 1
+proxmox_updates_download_interval: 1
+proxmox_updates_autoclean_interval: 7
