@@ -24,18 +24,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
+      # Tags from before this pipeline existed have no checksum script, so there
+      # is nothing to build for them. Skip rather than fail the run.
+      - name: Check whether this tag has the release tooling
+        id: guard
+        run: |
+          if [ -x scripts/make-checksums.sh ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "This tag predates scripts/make-checksums.sh, nothing to publish."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build SHA256SUMS
+        if: steps.guard.outputs.build == 'true'
         run: ./scripts/make-checksums.sh SHA256SUMS
 
       - name: Show checksums
+        if: steps.guard.outputs.build == 'true'
         run: cat SHA256SUMS
 
       - name: Install cosign
+        if: steps.guard.outputs.build == 'true'
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
 
       # Keyless: the signature is bound to this workflow's identity, so there is
       # no private key to store or rotate.
       - name: Sign SHA256SUMS
+        if: steps.guard.outputs.build == 'true'
         run: |
           cosign sign-blob --yes \
             --output-signature SHA256SUMS.sig \
@@ -43,6 +59,7 @@ jobs:
             SHA256SUMS
 
       - name: Write release notes
+        if: steps.guard.outputs.build == 'true'
         env:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
@@ -70,6 +87,7 @@ jobs:
       # Draft on purpose: publish once the tag is on the branch you actually
       # ship from. 'gh release edit <tag> --draft=false' or the web UI.
       - name: Create draft release
+        if: steps.guard.outputs.build == 'true'
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8  # v2.3.2
         with:
           draft: true

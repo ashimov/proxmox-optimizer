@@ -331,7 +331,7 @@ Injection and supply-chain pass.
 - Debian 13 package fixes: `mlocate` replaced by `plocate`, `omping` and
   `software-properties-common` dropped (not available on Trixie).
 
-## [1.0.1] - 2025-01-16
+## [1.0.1] - 2026-01-16
 
 ### Added
 
@@ -389,7 +389,7 @@ Shell script cleanup:
 - Race after `modprobe zfs` in `createzfs.sh`.
 - Placeholder GPG checksum for Trixie now skips validation instead of failing.
 
-## [1.0.0] - 2025-01-12
+## [1.0.0] - 2026-01-10
 
 First release. Shell scripts only.
 
