@@ -16,6 +16,13 @@ xs_ksmtuned: "no"
 # Needs the CISofy repository, which the fixture does not add
 xs_lynis: "no"
 
+# The AMD branch installs a pve-kernel-* package, which only exists in the
+# Proxmox repositories, and whether it runs at all depends on the CPU of
+# whatever machine the job lands on. run.sh covers that branch separately with
+# amd_detected and amd_kernel_package forced, so the result does not depend on
+# the runner.
+xs_amdfixes: "no"
+
 # Slow or destructive, and not what we are testing
 xs_aptupgrade: "no"
 xs_utils: "no"

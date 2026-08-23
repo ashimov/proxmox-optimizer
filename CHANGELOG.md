@@ -121,6 +121,29 @@ Found by the new fixture on its first runs:
 - `stdout_callback = yaml` resolves to `community.general.yaml`, which was
   removed in community.general 12. Switched to the builtin default plus
   `callback_result_format`, which does not depend on a collection version.
+- `regex_search(...) | default(['8'])` does not fall back the way it looks like
+  it does: `regex_search` returns None when it does not match, and `default()`
+  only fires on undefined. Unexpected `pveversion` output gave
+  "NoneType is not iterable" instead of the intended 8. Same shape in
+  `proxmox_base/ceph.yml`, `proxmox_tuning` and the Hetzner Robot credential
+  parsing, all four now use `default(x, true)`. The AMD branch is the one that
+  parses `pveversion`, so the fixture runs the playbook a second time with that
+  branch forced.
+
+And the CI that was supposed to catch all this:
+
+- Every workflow using `setup-python` with `cache: pip` failed at the Python
+  step, because the cache needs a `requirements.txt` or `pyproject.toml` to hash
+  and the repo had neither. yamllint, ansible-lint and molecule had been red on
+  every run for that reason alone.
+- ansible-lint: 1.0.2 removed `var-naming` from the skip list "to enforce
+  documented naming conventions", but `var-naming[no-role-prefix]` wants every
+  variable renamed to `<role_name>_*`, which is the whole documented `xs_*`
+  interface. 202 findings, red ever since. That one sub-rule is skipped now, the
+  rest of `var-naming` still applies.
+- molecule: the `delegated` driver no longer exists, and molecule repoints
+  `ANSIBLE_ROLES_PATH` at its own ephemeral directory, so the syntax checks
+  failed for every playbook that uses a role while the task-only ones passed.
 
 And the rest:
 
