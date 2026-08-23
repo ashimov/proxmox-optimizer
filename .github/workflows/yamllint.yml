@@ -7,15 +7,17 @@ name: YAML Lint
     paths:
       - 'ansible/**/*.yml'
       - 'ansible/**/*.yaml'
+      - 'tests/**/*.yml'
       - '.yamllint.yml'
-      - '.github/workflows/yamllint.yml'
+      - '.github/**/*.yml'
   pull_request:
     branches: [master, main]
     paths:
       - 'ansible/**/*.yml'
       - 'ansible/**/*.yaml'
+      - 'tests/**/*.yml'
       - '.yamllint.yml'
-      - '.github/workflows/yamllint.yml'
+      - '.github/**/*.yml'
 
 permissions:
   contents: read
@@ -39,4 +41,4 @@ jobs:
 
       - name: Run yamllint on Ansible files
         run: |
-          yamllint -c .yamllint.yml ansible/ .github/workflows/
+          yamllint -c .yamllint.yml ansible/ tests/ .github/

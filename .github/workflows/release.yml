@@ -17,6 +17,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Tags only. A manual dispatch on a branch would otherwise try to publish a
+    # release named after the branch.
+    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write     # create the release
       id-token: write     # cosign keyless signing

@@ -20,3 +20,11 @@ updates:
       prefix: ci
     labels:
       - dependencies
+    ignore:
+      # ansible 13 and up need Python 3.12. The supported hosts are Debian 12
+      # (3.11) and Debian 13, and the fixture runs on Debian 12, so the upper
+      # bound in requirements.txt is deliberate. Revisit when Bookworm is out
+      # of scope.
+      - dependency-name: ansible
+        versions:
+          - ">=13"
