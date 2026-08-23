@@ -2,3 +2,8 @@
 profile: basic
 skip_list:
   - yaml
+  # This project uses a documented xs_*/proxmox_* naming scheme that is shared
+  # across roles and is part of the public interface. no-role-prefix wants every
+  # variable renamed to <role_name>_*, which would rename all of it. The rest of
+  # var-naming still applies.
+  - var-naming[no-role-prefix]

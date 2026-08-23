@@ -58,3 +58,12 @@ jobs:
       - name: Run proxmox.yml in check mode
         working-directory: ./ansible
         run: ansible-playbook -i ../tests/fixture/inventory.ini playbooks/proxmox.yml --check --diff
+
+      # The AMD branch parses pveversion output and only runs on an AMD host, so
+      # force it. amd_kernel_package points at a package the container actually
+      # has: pve-kernel-* lives in the Proxmox repositories.
+      - name: Run proxmox.yml with the AMD branch forced
+        working-directory: ./ansible
+        run: |
+          ansible-playbook -i ../tests/fixture/inventory.ini playbooks/proxmox.yml --check \
+            -e amd_detected=true -e amd_kernel_package=linux-base

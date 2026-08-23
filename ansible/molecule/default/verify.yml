@@ -5,6 +5,9 @@
 
   vars:
     project_root: "{{ playbook_dir }}/../.."
+    repo_ansible_env:
+      ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
+      ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../../roles"
     # Every playbook, with the extra vars needed to get past vars_prompt.
     playbooks_to_check:
       - name: playbooks/proxmox.yml
@@ -20,11 +23,15 @@
         extra: "-e confirm_destruction=CI_SKIP"
 
   tasks:
+    # molecule points ANSIBLE_ROLES_PATH and ANSIBLE_CONFIG at its own ephemeral
+    # directory, so without this every playbook that uses a role fails to resolve
+    # it while the task-only ones pass.
     - name: Syntax check every playbook
       ansible.builtin.command: >-
         ansible-playbook {{ item.name }} --syntax-check {{ item.extra | default('') }}
       args:
         chdir: "{{ project_root }}"
+      environment: "{{ repo_ansible_env }}"
       loop: "{{ playbooks_to_check }}"
       loop_control:
         label: "{{ item.name }}"
@@ -38,6 +45,7 @@
         --list-hosts {{ item.extra | default('') }}
       args:
         chdir: "{{ project_root }}"
+      environment: "{{ repo_ansible_env }}"
       loop: "{{ playbooks_to_check }}"
       loop_control:
         label: "{{ item.name }}"

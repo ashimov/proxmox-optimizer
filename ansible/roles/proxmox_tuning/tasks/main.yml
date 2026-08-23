@@ -84,7 +84,7 @@
 
 - name: Set Proxmox major version for AMD kernel
   ansible.builtin.set_fact:
-    proxmox_pve_major: "{{ (pveversion_out.stdout | regex_search('pve-manager/(\\d+)', '\\1') | default(['8'])) | first | int }}"
+    proxmox_pve_major: "{{ (pveversion_out.stdout | regex_search('pve-manager/(\\d+)', '\\1') | default(['8'], true)) | first | int }}"
   when: xs_amdfixes | lower == "yes" and amd_detected
 
 - name: Select AMD kernel package

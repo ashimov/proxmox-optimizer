@@ -24,6 +24,16 @@ echo "== proxmox.yml, check mode =="
 ansible-playbook -i "../${inventory}" playbooks/proxmox.yml --check --diff
 
 echo
+# The AMD path is only taken on an AMD host, and that is where the pveversion
+# parsing lives. Force it so the branch is covered wherever this runs.
+# amd_kernel_package points at any package the container has, because
+# pve-kernel-* only exists in the Proxmox repositories. The point is the
+# version parsing above it, not the install.
+echo "== proxmox.yml, check mode, AMD branch forced =="
+ansible-playbook -i "../${inventory}" playbooks/proxmox.yml --check \
+  -e amd_detected=true -e amd_kernel_package=linux-base
+
+echo
 echo "== validate-postinstall.yml, check mode =="
 ansible-playbook -i "../${inventory}" playbooks/validate-postinstall.yml --check || \
   echo "NOTE: validation reports drift on the fixture, which is expected"

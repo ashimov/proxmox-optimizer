@@ -6,7 +6,7 @@
 
 - name: Set Proxmox major version
   ansible.builtin.set_fact:
-    proxmox_base_pve_major: "{{ (proxmox_base_pveversion_out.stdout | regex_search('pve-manager/(\\d+)', '\\1') | default(['8'])) | first | int }}"
+    proxmox_base_pve_major: "{{ (proxmox_base_pveversion_out.stdout | regex_search('pve-manager/(\\d+)', '\\1') | default(['8'], true)) | first | int }}"
 
 - name: Select Ceph release
   ansible.builtin.set_fact:
