@@ -1,18 +1,26 @@
 ---
+# There is no infrastructure to create here: the scenario runs syntax checks,
+# host resolution and rendering assertions against the checkout itself.
+# 'delegated' was removed from molecule, 'default' is the current name.
 dependency:
   name: galaxy
   options:
     requirements-file: ../../collections/requirements.yml
 
 driver:
-  name: delegated
+  name: default
 
 platforms:
   - name: localhost
-    ansible_connection: local
 
 provisioner:
   name: ansible
+  inventory:
+    hosts:
+      all:
+        hosts:
+          localhost:
+            ansible_connection: local
   playbooks:
     converge: converge.yml
     verify: verify.yml
@@ -20,7 +28,5 @@ provisioner:
 scenario:
   test_sequence:
     - dependency
-    - destroy
     - converge
     - verify
-    - destroy
