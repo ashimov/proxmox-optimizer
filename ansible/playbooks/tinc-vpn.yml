@@ -5,7 +5,7 @@
 #   ansible-playbook playbooks/tinc-vpn.yml -i inventory.yml
 #
 # Example inventory for 3-node cluster:
-#   proxmox_nodes:
+#   proxmox:
 #     hosts:
 #       node1:
 #         tinc_vpn_ip_last: 1
@@ -18,7 +18,7 @@
 #         tinc_connect_to: node1
 #
 - name: Setup Tinc VPN mesh network
-  hosts: proxmox_nodes
+  hosts: proxmox
   become: true
   serial: 1  # Run one host at a time to collect keys
 
@@ -28,7 +28,7 @@
   post_tasks:
     - name: Collect host configurations
       ansible.builtin.slurp:
-        src: "/etc/tinc/{{ tinc_network_name | default('xsvpn') }}/hosts/{{ ansible_hostname | replace('-', '_') }}"
+        src: "/etc/tinc/{{ tinc_network_name | default('pvemesh') }}/hosts/{{ ansible_hostname | replace('-', '_') }}"
       register: host_config
 
     - name: Save host configuration locally
@@ -40,7 +40,7 @@
       become: false
 
 - name: Distribute host configurations
-  hosts: proxmox_nodes
+  hosts: proxmox
   become: true
 
   tasks:
@@ -56,7 +56,7 @@
     - name: Deploy host configurations
       ansible.builtin.copy:
         src: "{{ item.path }}"
-        dest: "/etc/tinc/{{ tinc_network_name | default('xsvpn') }}/hosts/"
+        dest: "/etc/tinc/{{ tinc_network_name | default('pvemesh') }}/hosts/"
         mode: "0644"
       loop: "{{ host_configs.files }}"
       when: item.path | basename != (ansible_hostname | replace('-', '_'))
@@ -65,5 +65,5 @@
   handlers:
     - name: Restart tinc
       ansible.builtin.systemd:
-        name: "tinc-{{ tinc_network_name | default('xsvpn') }}"
+        name: "tinc-{{ tinc_network_name | default('pvemesh') }}"
         state: restarted

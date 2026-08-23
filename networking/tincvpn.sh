@@ -12,7 +12,7 @@
 # License: BSD (Berkeley Software Distribution)
 #
 # Usage:
-# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/tincvpn.sh && chmod +x tincvpn.sh
+# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/networking/tincvpn.sh && chmod +x tincvpn.sh
 # ./tincvpn.sh -h
 #
 # Example for 3 node Cluster
@@ -68,28 +68,36 @@ do
   esac
 done
 
-# Validate vpn_ip_last is a valid octet
+# These all end up in tinc.conf or hosts/*, a newline would add directives
 if ! [[ "$vpn_ip_last" =~ ^[0-9]+$ ]] || [ "$vpn_ip_last" -lt 1 ] || [ "$vpn_ip_last" -gt 254 ]; then
   echo "ERROR: -i value must be a number between 1 and 254"
+  exit 1
+fi
+if ! [[ "$vpn_port" =~ ^[0-9]+$ ]] || [ "$vpn_port" -lt 1 ] || [ "$vpn_port" -gt 65535 ]; then
+  echo "ERROR: -p value must be a port number between 1 and 65535"
+  exit 1
+fi
+if [ "$vpn_connect_to" != "" ] && ! [[ "$vpn_connect_to" =~ ^[a-zA-Z0-9_]{1,64}$ ]]; then
+  echo "ERROR: -c must be a tinc node name ([a-zA-Z0-9_], max 64 chars)"
+  exit 1
+fi
+if [ "$my_default_v4ip" != "" ] && ! [[ "$my_default_v4ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  echo "ERROR: -a must be an IPv4 address"
   exit 1
 fi
 
 if [ "$reset" == "yes" ] || [ "$uninstall" == "yes" ] ; then
   echo "Stopping Tinc"
-  systemctl stop tinc-xsvpn.service || true
+  systemctl stop tinc-pvemesh.service || true
   pkill -9 tincd || true
 
   echo "Removing configs"
-  rm -rf /etc/tinc/xsvpn
-  # Restore nets.boot backup if it exists
-  if [ -f /etc/tinc/nets.boot.orig ]; then
-    mv -f /etc/tinc/nets.boot.orig /etc/tinc/nets.boot
-  fi
+  rm -rf /etc/tinc/pvemesh
   rm -f /etc/network/interfaces.d/tinc-vpn.cfg
-  rm -f /etc/systemd/system/tinc-xsvpn.service
+  rm -f /etc/systemd/system/tinc-pvemesh.service
 
   if [ "$uninstall" == "yes" ] ; then
-    systemctl disable tinc-xsvpn.service || true
+    systemctl disable tinc-pvemesh.service || true
     echo "Tinc uninstalled"
     exit 0
   fi
@@ -107,7 +115,7 @@ fi
 
 if [ "$my_default_v4ip" == "" ] ; then
   #detect default ipv4 and default interface
-  default_interface="$(ip route | awk '/default/ { print $5; exit }' | grep -v "vmbr")"
+  default_interface="$(ip route | awk '/default/ { print $5; exit }' | grep -v "vmbr" || true)"
   if [ "$default_interface" == "" ]; then
     #filter the interfaces to get the default interface and which is not down and not a virtual bridge
     default_interface="$(ip link | sed -e '/state DOWN / { N; d; }' | sed -e '/veth[0-9].*:/ { N; d; }' | sed -e '/vmbr[0-9].*:/ { N; d; }' | sed -e '/tap[0-9].*:/ { N; d; }' | sed -e '/lo:/ { N; d; }' | head -n 1 | cut -d':' -f 2 | xargs)"
@@ -157,103 +165,101 @@ if [ "$(command -v tincd)" == "" ] ; then
 fi
 
 #Create the DIR and key files
-mkdir -p /etc/tinc/xsvpn/hosts
-chmod 700 /etc/tinc/xsvpn
-touch /etc/tinc/xsvpn/rsa_key.pub
-touch /etc/tinc/xsvpn/rsa_key.priv
-chmod 600 /etc/tinc/xsvpn/rsa_key.priv
+mkdir -p /etc/tinc/pvemesh/hosts
+chmod 700 /etc/tinc/pvemesh
+touch /etc/tinc/pvemesh/rsa_key.pub
+touch /etc/tinc/pvemesh/rsa_key.priv
+chmod 600 /etc/tinc/pvemesh/rsa_key.priv
 
-if [ "$(grep "BEGIN RSA PUBLIC KEY" /etc/tinc/xsvpn/rsa_key.pub 2> /dev/null)" != "" ] ; then
-  if [ "$(grep "BEGIN RSA PRIVATE KEY" /etc/tinc/xsvpn/rsa_key.priv 2> /dev/null)" != "" ] ; then
+if [ "$(grep "BEGIN RSA PUBLIC KEY" /etc/tinc/pvemesh/rsa_key.pub 2> /dev/null)" != "" ] ; then
+  if [ "$(grep "BEGIN RSA PRIVATE KEY" /etc/tinc/pvemesh/rsa_key.priv 2> /dev/null)" != "" ] ; then
     echo "Using Previous RSA Keys"
   else
     echo "Generating New RSA Keys"
-    if ! tincd -K4096 -c /etc/tinc/xsvpn </dev/null 2>/dev/null; then
+    if ! tincd -K4096 -c /etc/tinc/pvemesh </dev/null 2>/dev/null; then
       echo "ERROR: RSA key generation failed"
       exit 1
     fi
   fi
 else
   echo "Generating New 4096 bit RSA Keys"
-  if ! tincd -K4096 -c /etc/tinc/xsvpn </dev/null 2>/dev/null; then
+  if ! tincd -K4096 -c /etc/tinc/pvemesh </dev/null 2>/dev/null; then
     echo "ERROR: RSA key generation failed"
     exit 1
   fi
 fi
 
 # Validate keys were generated
-if [ ! -s /etc/tinc/xsvpn/rsa_key.pub ] || ! grep -q "BEGIN RSA PUBLIC KEY" /etc/tinc/xsvpn/rsa_key.pub; then
+if [ ! -s /etc/tinc/pvemesh/rsa_key.pub ] || ! grep -q "BEGIN RSA PUBLIC KEY" /etc/tinc/pvemesh/rsa_key.pub; then
   echo "ERROR: RSA public key is missing or invalid"
   exit 1
 fi
-if [ ! -s /etc/tinc/xsvpn/rsa_key.priv ] || ! grep -q "BEGIN RSA PRIVATE KEY" /etc/tinc/xsvpn/rsa_key.priv; then
+if [ ! -s /etc/tinc/pvemesh/rsa_key.priv ] || ! grep -q "BEGIN RSA PRIVATE KEY" /etc/tinc/pvemesh/rsa_key.priv; then
   echo "ERROR: RSA private key is missing or invalid"
   exit 1
 fi
 
 #Generate Configs
-cat <<EOF > /etc/tinc/xsvpn/tinc.conf
+cat <<EOF > /etc/tinc/pvemesh/tinc.conf
 Name = $my_name
 AddressFamily = ipv4
 Interface = Tun0
 Mode = switch
-Compression = 10
-# Switch: Unicast, multicast and broadcast packaets
+# tinc 1.0 defaults to blowfish/SHA1. All nodes must match these two lines.
+Cipher = aes-256-cbc
+Digest = sha256
+# compressing before encryption leaks plaintext structure
+Compression = 0
+# Switch: Unicast, multicast and broadcast packets
 ConnectTo = $vpn_connect_to
 EOF
 
-cat <<EOF > "/etc/tinc/xsvpn/hosts/$my_name"
+cat <<EOF > "/etc/tinc/pvemesh/hosts/$my_name"
 Address = ${my_default_v4ip}
 Subnet =  10.10.1.${vpn_ip_last}
 Port = ${vpn_port}
 EOF
-cat /etc/tinc/xsvpn/rsa_key.pub >> "/etc/tinc/xsvpn/hosts/${my_name}"
+cat /etc/tinc/pvemesh/rsa_key.pub >> "/etc/tinc/pvemesh/hosts/${my_name}"
 
-cat <<EOF > /etc/tinc/xsvpn/tinc-up
+cat <<EOF > /etc/tinc/pvemesh/tinc-up
 #!/usr/bin/env bash
-ip link set \$INTERFACE up
-ip addr add  10.10.1.${vpn_ip_last}/24 dev \$INTERFACE
+set -eu
+ip link set "\$INTERFACE" up
+ip addr add 10.10.1.${vpn_ip_last}/24 dev "\$INTERFACE"
 
-# Set a multicast route over interface
-route add -net 224.0.0.0 netmask 240.0.0.0 dev \$INTERFACE
+# Multicast route over the tunnel (iproute2 - net-tools may not be installed)
+ip route replace 224.0.0.0/4 dev "\$INTERFACE" || true
 EOF
 
-chmod 755 /etc/tinc/xsvpn/tinc-up
+chmod 755 /etc/tinc/pvemesh/tinc-up
 
-cat <<EOF > /etc/tinc/xsvpn/tinc-down
+cat <<EOF > /etc/tinc/pvemesh/tinc-down
 #!/usr/bin/env bash
-ip route del 10.10.1.0/24 dev \$INTERFACE 2>/dev/null || true
-ip addr del 10.10.1.${vpn_ip_last}/24 dev \$INTERFACE
-ip link set \$INTERFACE down
-
-# Remove multicast route
-route del -net 224.0.0.0 netmask 240.0.0.0 dev \$INTERFACE 2>/dev/null || true
+set -u
+ip route del 224.0.0.0/4 dev "\$INTERFACE" 2>/dev/null || true
+ip addr del 10.10.1.${vpn_ip_last}/24 dev "\$INTERFACE" 2>/dev/null || true
+ip link set "\$INTERFACE" down || true
 EOF
 
-chmod 755 /etc/tinc/xsvpn/tinc-down
+chmod 755 /etc/tinc/pvemesh/tinc-down
 
-# Set which VPN to start
-#cp -f /etc/tinc/nets.boot /etc/tinc/nets.boot.orig
-#echo "vpn" >> /etc/tinc/nets.boot
-
-# Resolve tincd path now and embed it absolutely in the unit file so that
-# the service does not silently break if tincd moves or is removed later.
+# Embed the absolute path so the unit does not break if tincd moves
 TINCD_BIN="$(command -v tincd || true)"
 if [ -z "$TINCD_BIN" ] || [ ! -x "$TINCD_BIN" ]; then
-  echo "ERROR: tincd binary not found in PATH after install — aborting" >&2
+  echo "ERROR: tincd binary not found in PATH after install" >&2
   exit 1
 fi
 
-cat <<EOF > /etc/systemd/system/tinc-xsvpn.service
+cat <<EOF > /etc/systemd/system/tinc-pvemesh.service
 [Unit]
 Description=ashimov.com Tinc VPN
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/etc/tinc/xsvpn
-ExecStart=${TINCD_BIN} -n xsvpn -D -d2
-ExecReload=${TINCD_BIN} -n xsvpn -kHUP
+WorkingDirectory=/etc/tinc/pvemesh
+ExecStart=${TINCD_BIN} -n pvemesh -D -d2
+ExecReload=${TINCD_BIN} -n pvemesh -kHUP
 TimeoutStopSec=5
 Restart=always
 RestartSec=60
@@ -263,8 +269,8 @@ WantedBy=multi-user.target
 EOF
 
 # Enable and start at Boot
-systemctl enable tinc-xsvpn.service
-systemctl start tinc-xsvpn.service || echo "WARNING: tinc-xsvpn.service failed to start, check logs"
+systemctl enable tinc-pvemesh.service
+systemctl start tinc-pvemesh.service || echo "WARNING: tinc-pvemesh.service failed to start, check logs"
 
 # Add a Tun0 entry to /etc/network/interfaces to allow for ceph suport over the VPN
 if [ "$(grep "source /etc/network/interfaces.d/*" /etc/network/interfaces 2> /dev/null)" == "" ] ; then
@@ -284,14 +290,14 @@ fi
 #Display the Host config for simple cpy-paste to another node
 echo ""
 echo "Run the following on the other VPN nodes:"
-echo "The following information is stored in /etc/tinc/xsvpn/this_host.info"
+echo "The following information is stored in /etc/tinc/pvemesh/this_host.info"
 
-echo 'cat <<EOF >> /etc/tinc/xsvpn/hosts/'"${my_name}" > /etc/tinc/xsvpn/this_host.info
-cat "/etc/tinc/xsvpn/hosts/${my_name}" >> /etc/tinc/xsvpn/this_host.info
-echo "EOF" >> /etc/tinc/xsvpn/this_host.info
+echo 'cat <<EOF >> /etc/tinc/pvemesh/hosts/'"${my_name}" > /etc/tinc/pvemesh/this_host.info
+cat "/etc/tinc/pvemesh/hosts/${my_name}" >> /etc/tinc/pvemesh/this_host.info
+echo "EOF" >> /etc/tinc/pvemesh/this_host.info
 
 echo ""
-echo 'cat <<EOF >> /etc/tinc/xsvpn/hosts/'"${my_name}"
-cat "/etc/tinc/xsvpn/hosts/${my_name}"
+echo 'cat <<EOF >> /etc/tinc/pvemesh/hosts/'"${my_name}"
+cat "/etc/tinc/pvemesh/hosts/${my_name}"
 echo "EOF"
 echo ""

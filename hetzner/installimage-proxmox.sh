@@ -46,6 +46,9 @@ NVME_FORCE_4K="FALSE"
 # Will create a new GPT partition table on the install target drives.
 # this will wipe all patition information on the drives
 WIPE_PARTITION_TABLE="TRUE"
+# Destructive operations require an explicit confirmation:
+#   INSTALL_CONFIRM=yes ./installimage-proxmox.sh host.fqdn.com
+INSTALL_CONFIRM="${INSTALL_CONFIRM:-no}"
 # FQDN Hostname
 MY_HOSTNAME=""
 # Select the OS to install "PVE" "PBS", default is PVE
@@ -92,11 +95,12 @@ if [ ! -f "$installimage_bin" ]; then
 fi
 
 #OS to install
-if [ "$MY_OS" == "" ]; then
-  OS="$2"
+OS="${MY_OS}"
+if [ "$OS" == "" ]; then
+  OS="${2:-}"
 fi
 PVE_MAJOR="${MY_PVE_MAJOR}"
-if [ "$PVE_MAJOR" == "" ] && [ "$3" != "" ] ; then
+if [ "$PVE_MAJOR" == "" ] && [ "${3:-}" != "" ] ; then
   PVE_MAJOR="$3"
 fi
 if [ "${OS,,}" == "pbs" ] ; then
@@ -138,7 +142,7 @@ fi
 
 #Hostname
 if [ "$MY_HOSTNAME" == "" ] ; then
-  MY_HOSTNAME="$1"
+  MY_HOSTNAME="${1:-}"
 fi
 if [[ "$MY_HOSTNAME" != *.* ]] ; then
   echo "ERROR: Please set a FQDN hostname"
@@ -158,6 +162,7 @@ if ! [[ "$MY_HOSTNAME" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z
 fi
 echo "Hostname: ${MY_HOSTNAME}"
 
+MY_USE_LVM="${MY_USE_LVM:-}"
 if [ "$MY_USE_LVM" != "" ] && [ "${MY_USE_LVM,,}" != "true" ] && [ "${MY_USE_LVM,,}" != "yes" ]  ; then
   LVM="FALSE"
 else
@@ -195,11 +200,9 @@ if [[ $MY_ROOT -lt 10 ]] && [ "$MY_ROOT" != "" ] ; then
 fi
 
 # Generate NVME Device Arrays
-# shellcheck disable=SC2010
-mapfile -t NVME_ARRAY < <( ls -1 /sys/block | grep ^nvme | sort -d )
+mapfile -t NVME_ARRAY < <( for d in /sys/block/nvme*; do [ -e "$d" ] && basename "$d"; done | sort -d )
 NVME_COUNT=${#NVME_ARRAY[@]}
 NVME_TARGET=""
-NVME_TARGET_FIRST=""
 NVME_TARGET_COUNT=0
 NVME_TARGET_SIZE=0
 if [[ $NVME_COUNT -ge 1 ]] ; then
@@ -225,7 +228,6 @@ if [[ $NVME_COUNT -ge 1 ]] ; then
       fi
       if [ "${NVME_TARGET}" == "" ] ; then
         NVME_TARGET="${nvme_device}"
-        NVME_TARGET_FIRST="${nvme_device}"
         NVME_TARGET_COUNT=1
         NVME_TARGET_SIZE="${nvme_size}"
       else
@@ -240,8 +242,7 @@ if [[ $NVME_COUNT -ge 1 ]] ; then
 fi
 
 # Generate SCSI (HDD/SSD) Device Arrays
-# shellcheck disable=SC2010
-mapfile -t SCSI_ARRAY < <( ls -1 /sys/block | grep ^sd | sort -d )
+mapfile -t SCSI_ARRAY < <( for d in /sys/block/sd*; do [ -e "$d" ] && basename "$d"; done | sort -d )
 SCSI_COUNT=${#SCSI_ARRAY[@]}
 SSD_COUNT=0
 HDD_COUNT=0
@@ -249,8 +250,6 @@ SSD_TARGET=""
 HDD_TARGET=""
 SSD_TARGET_COUNT=0
 HDD_TARGET_COUNT=0
-SSD_TARGET_FIRST=""
-HDD_TARGET_FIRST=""
 SSD_TARGET_SIZE=0
 HDD_TARGET_SIZE=0
 if [[ $SCSI_COUNT -ge 1 ]] ; then
@@ -264,7 +263,6 @@ if [[ $SCSI_COUNT -ge 1 ]] ; then
       fi
       if [ "${SSD_TARGET}" == "" ] ; then
         SSD_TARGET="${scsi_device}"
-        SSD_TARGET_FIRST="${scsi_device}"
         SSD_TARGET_COUNT=1
         SSD_TARGET_SIZE="${ssd_size}"
       else
@@ -284,7 +282,6 @@ if [[ $SCSI_COUNT -ge 1 ]] ; then
       fi
       if [ "${HDD_TARGET}" == "" ] ; then
         HDD_TARGET="${scsi_device}"
-        HDD_TARGET_FIRST="${scsi_device}"
         HDD_TARGET_COUNT=1
         HDD_TARGET_SIZE="${hdd_size}"
       else
@@ -527,12 +524,12 @@ else
   SWAP=""
 fi
 if [ "$ZFS_L2ARC" != "0" ]; then
-  ZFS_L2ARC=",/xshok/zfs-L2ARC:ext4:${ZFS_L2ARC}G"
+  ZFS_L2ARC=",/ashimov/zfs-cache:ext4:${ZFS_L2ARC}G"
 else
   ZFS_L2ARC=""
 fi
 if [ "$ZFS_SLOG" != "0" ]; then
-  ZFS_SLOG=",/xshok/zfs-slog:ext4:${ZFS_SLOG}G"
+  ZFS_SLOG=",/ashimov/zfs-slog:ext4:${ZFS_SLOG}G"
 else
   ZFS_SLOG=""
 fi
@@ -544,10 +541,10 @@ fi
 
 if [ "$OS" == "PBS" ] ; then
   postinstall_file="/root/pbs"
-  postinstall_url="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/pbs"
+  postinstall_url="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/hetzner/pbs"
 else
   postinstall_file="/root/pve"
-  postinstall_url="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/pve"
+  postinstall_url="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/hetzner/pve"
 fi
 
 if [ ! -f "$postinstall_file" ] ; then
@@ -578,8 +575,26 @@ cp -f "$postinstall_file" /post-install-proxmox
 chmod 755 /post-install-proxmox
 
 
+if [ "${INSTALL_CONFIRM,,}" != "yes" ] && [ "${INSTALL_CONFIRM,,}" != "true" ] ; then
+  echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+  echo "  WARNING: installimage will REINSTALL the operating system on"
+  echo "  ${INSTALL_TARGET} and (with WIPE_PARTITION_TABLE=TRUE) destroy"
+  echo "  every partition table on those devices."
+  echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+  echo ""
+  echo "  Re-run with an explicit confirmation:"
+  echo "    INSTALL_CONFIRM=yes $0 $*"
+  exit 1
+fi
+
 if [ "${WIPE_PARTITION_TABLE,,}" == "yes" ] || [ "${WIPE_PARTITION_TABLE,,}" == "true" ] ; then
   IFS=', ' read -r -a INSTALL_TARGET_ARRAY <<< "${INSTALL_TARGET}"
+  echo "The following devices will have their partition table DESTROYED:"
+  for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
+    lsblk -dn -o NAME,SIZE,MODEL,SERIAL "/dev/${install_device}" 2>/dev/null || echo "  /dev/${install_device}"
+  done
+  echo "Starting in 10 seconds, [CTRL]+[C] to abort"
+  sleep 10
   for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
     echo "Creating NEW GPT table: ${install_device}"
     parted -s "/dev/${install_device}" mklabel gpt || exit 1

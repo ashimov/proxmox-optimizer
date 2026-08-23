@@ -41,7 +41,10 @@ env/
 *.env.local
 
 # Ansible
+# The working inventory holds real hostnames/addresses - keep only the example
+ansible/inventory/hosts.ini
 *.retry
+.ansible/
 .molecule/
 .cache/
 ansible/.vagrant/

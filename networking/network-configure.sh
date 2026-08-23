@@ -91,7 +91,12 @@ get_bridge_port() {
 echo "Auto detecting existing network settings"
 
 # Detect primary interface using the default route
-default_interface="$(ip -o route get 8.8.8.8 | grep -o 'dev [^ ]*' | xargs | cut -d' ' -f 2)"
+# '|| true': without it set -e kills the script on a host with no egress,
+# instead of falling through to the detection below.
+default_interface="$(ip -o route get 8.8.8.8 2>/dev/null | grep -o 'dev [^ ]*' | xargs | cut -d' ' -f 2 || true)"
+if [ "$default_interface" == "" ]; then
+  default_interface="$(ip route | awk '/default/ { print $5; exit }' || true)"
+fi
 default_ip_interface="$default_interface"
 
 if [[ $default_interface == vmbr* ]] ; then

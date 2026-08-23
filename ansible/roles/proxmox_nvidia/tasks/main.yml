@@ -1,100 +1,139 @@
 ---
-# proxmox_nvidia role - Configure NVIDIA Docker runtime
+# proxmox_nvidia role - Install the NVIDIA Container Toolkit
 # ============================================================================
 
-- name: Skip if NVIDIA Docker not enabled
+- name: Skip if NVIDIA container runtime not enabled
   ansible.builtin.meta: end_role
   when: not nvidia_docker_enabled
 
-- name: Ensure gnupg is installed
+- name: Ensure gnupg and curl are installed
   ansible.builtin.apt:
-    name: gnupg
+    name:
+      - gnupg
+      - curl
+      - ca-certificates
     state: present
     update_cache: true
 
-- name: Get distribution info
-  ansible.builtin.set_fact:
-    nvidia_distribution: "{{ ansible_distribution | lower }}{{ ansible_distribution_version }}"
-
-- name: Ensure keyrings directory exists
+- name: Ensure keyring directory exists
   ansible.builtin.file:
-    path: /etc/apt/keyrings
+    path: /usr/share/keyrings
     state: directory
     owner: root
     group: root
     mode: "0755"
 
-- name: Warn if NVIDIA Docker supply-chain checksums are not pinned
+- name: Warn if NVIDIA supply-chain checksums are not pinned
   ansible.builtin.debug:
     msg: >-
-      WARNING: nvidia_docker_gpg_sha256 / nvidia_docker_list_sha256 are empty.
-      The NVIDIA GPG key and repository list will be trusted purely based on
+      WARNING: nvidia_toolkit_gpg_sha256 / nvidia_toolkit_list_sha256 are empty.
+      The NVIDIA signing key and repository list will be trusted purely based on
       TLS. Set these to known-good SHA256 values in inventory to defend
       against an upstream supply-chain compromise.
   when:
-    - nvidia_docker_gpg_sha256 | length == 0
-      or nvidia_docker_list_sha256 | length == 0
+    - nvidia_toolkit_gpg_sha256 | length == 0
+      or nvidia_toolkit_list_sha256 | length == 0
 
-- name: Download NVIDIA GPG key
+- name: Download NVIDIA signing key
   ansible.builtin.get_url:
-    url: "{{ nvidia_docker_gpg_url }}"
-    dest: /tmp/nvidia-docker.gpgkey
+    url: "{{ nvidia_toolkit_gpg_url }}"
+    dest: /tmp/nvidia-container-toolkit.gpgkey
     mode: "0644"
     owner: root
     group: root
     timeout: 30
     validate_certs: true
-    checksum: "{{ ('sha256:' ~ nvidia_docker_gpg_sha256) if nvidia_docker_gpg_sha256 | length > 0 else omit }}"
+    checksum: "{{ ('sha256:' ~ nvidia_toolkit_gpg_sha256) if nvidia_toolkit_gpg_sha256 | length > 0 else omit }}"
 
-- name: Dearmor NVIDIA GPG key
-  ansible.builtin.shell: |
-    gpg --dearmor -o /etc/apt/keyrings/nvidia-docker.gpg < /tmp/nvidia-docker.gpgkey
+- name: Dearmor NVIDIA signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --batch
+      - --yes
+      - --dearmor
+      - -o
+      - "{{ nvidia_toolkit_keyring }}"
+      - /tmp/nvidia-container-toolkit.gpgkey
   args:
-    creates: /etc/apt/keyrings/nvidia-docker.gpg
-  changed_when: true
+    creates: "{{ nvidia_toolkit_keyring }}"
 
-- name: Remove temporary GPG key
+- name: Set permissions on the NVIDIA keyring
   ansible.builtin.file:
-    path: /tmp/nvidia-docker.gpgkey
+    path: "{{ nvidia_toolkit_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove temporary key file
+  ansible.builtin.file:
+    path: /tmp/nvidia-container-toolkit.gpgkey
     state: absent
 
 - name: Download NVIDIA repository list
   ansible.builtin.get_url:
-    url: "{{ nvidia_docker_repo_url }}/{{ nvidia_distribution }}/nvidia-docker.list"
-    dest: /tmp/nvidia-docker.list
+    url: "{{ nvidia_toolkit_list_url }}"
+    dest: /tmp/nvidia-container-toolkit.list
     mode: "0644"
     owner: root
     group: root
     timeout: 30
     validate_certs: true
-    checksum: "{{ ('sha256:' ~ nvidia_docker_list_sha256) if nvidia_docker_list_sha256 | length > 0 else omit }}"
+    checksum: "{{ ('sha256:' ~ nvidia_toolkit_list_sha256) if nvidia_toolkit_list_sha256 | length > 0 else omit }}"
 
 - name: Read NVIDIA repository list
   ansible.builtin.slurp:
-    src: /tmp/nvidia-docker.list
+    src: /tmp/nvidia-container-toolkit.list
   register: nvidia_repo_content
 
 - name: Install NVIDIA repository with signed-by
   ansible.builtin.copy:
-    dest: /etc/apt/sources.list.d/nvidia-docker.list
-    content: "{{ nvidia_repo_content.content | b64decode | regex_replace('^deb https://', 'deb [signed-by=/etc/apt/keyrings/nvidia-docker.gpg] https://') }}"
+    dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    content: "{{ nvidia_repo_content.content | b64decode | regex_replace('deb https://', 'deb [signed-by=' ~ nvidia_toolkit_keyring ~ '] https://') }}"
     owner: root
     group: root
     mode: "0644"
 
 - name: Remove temporary repository file
   ansible.builtin.file:
-    path: /tmp/nvidia-docker.list
+    path: /tmp/nvidia-container-toolkit.list
     state: absent
+
+- name: Remove end-of-life nvidia-docker repository
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/nvidia-docker.list
+    - /etc/apt/keyrings/nvidia-docker.gpg
 
 - name: Update APT cache
   ansible.builtin.apt:
     update_cache: true
 
-- name: Install nvidia-docker2
+- name: Install nvidia-container-toolkit
   ansible.builtin.apt:
-    name: nvidia-docker2
+    name: nvidia-container-toolkit
     state: present
+  notify: Reload Docker daemon
+
+- name: Check for nvidia-ctk
+  ansible.builtin.stat:
+    path: /usr/bin/nvidia-ctk
+  register: nvidia_ctk_binary
+
+- name: Configure the Docker runtime
+  ansible.builtin.command:
+    argv:
+      - nvidia-ctk
+      - runtime
+      - configure
+      - --runtime=docker
+  register: nvidia_ctk_configure
+  changed_when: "'already' not in (nvidia_ctk_configure.stderr | default(''))"
+  when:
+    - nvidia_configure_docker_runtime | bool
+    - nvidia_ctk_binary.stat.exists
   notify: Reload Docker daemon
 
 - name: Reboot if requested

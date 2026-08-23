@@ -40,6 +40,15 @@ NVME_FORCE_4K="FALSE"
 # Will create a new GPT partition table on the install target drives.
 # this will wipe all patition information on the drives
 WIPE_PARTITION_TABLE="TRUE"
+# Destructive operations require an explicit confirmation:
+#   INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh
+INSTALL_CONFIRM="${INSTALL_CONFIRM:-no}"
+# Select the OS to install "PVE" "PBS", default is PVE (or pass as $1)
+MY_OS="${MY_OS:-}"
+# VNC listen address. Loopback by default: VNC auth only uses the first 8
+# characters of the password and the rescue system is on a public IP.
+#   ssh -N -L 5900:127.0.0.1:5900 root@<rescue-ip>
+MY_VNC_BIND="${MY_VNC_BIND:-127.0.0.1}"
 # Proxmox VE major version (8/9). Leave blank for default.
 MY_PVE_MAJOR=""
 # Override the Proxmox VE ISO version (example: 9.0-1)
@@ -58,8 +67,9 @@ export LANG="en_US.UTF-8"
 export LC_ALL="C"
 
 #OS to install
-if [ "$MY_OS" == "" ]; then
-  OS="$1"
+OS="${MY_OS}"
+if [ "$OS" == "" ]; then
+  OS="${1:-}"
 fi
 PVE_MAJOR="${MY_PVE_MAJOR}"
 if [ "${OS,,}" == "pbs" ] ; then
@@ -143,8 +153,20 @@ else
   INSTALL_IMAGE="proxmox-ve.iso"
 fi
 
+if [ "${INSTALL_CONFIRM,,}" != "yes" ] && [ "${INSTALL_CONFIRM,,}" != "true" ] ; then
+  echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+  echo "  WARNING: this script boots an installer against your DISKS"
+  echo "  and (with WIPE_PARTITION_TABLE=TRUE) writes a new GPT label,"
+  echo "  destroying every partition table on the install target."
+  echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+  echo ""
+  echo "  Re-run with an explicit confirmation:"
+  echo "    INSTALL_CONFIRM=yes $0 $*"
+  exit 1
+fi
+
 # Generate NVME Device Arrays
-mapfile -t NVME_ARRAY < <( ls -1 /sys/block | grep ^nvme | sort -d )
+mapfile -t NVME_ARRAY < <( for d in /sys/block/nvme*; do [ -e "$d" ] && basename "$d"; done | sort -d )
 NVME_COUNT=${#NVME_ARRAY[@]}
 NVME_TARGET=""
 NVME_TARGET_FIRST=""
@@ -175,7 +197,7 @@ if [[ $NVME_COUNT -ge 1 ]] ; then
 fi
 
 # Generate SCSI (HDD/SSD) Device Arrays
-mapfile -t SCSI_ARRAY < <( ls -1 /sys/block | grep ^sd | sort -d )
+mapfile -t SCSI_ARRAY < <( for d in /sys/block/sd*; do [ -e "$d" ] && basename "$d"; done | sort -d )
 SCSI_COUNT=${#SCSI_ARRAY[@]}
 SSD_COUNT=0
 HDD_COUNT=0
@@ -276,6 +298,12 @@ for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
   fi
 done
 if [ "${WIPE_PARTITION_TABLE,,}" == "yes" ] || [ "${WIPE_PARTITION_TABLE,,}" == "true" ] ; then
+  echo "The following devices will have their partition table DESTROYED:"
+  for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
+    lsblk -dn -o NAME,SIZE,MODEL,SERIAL "/dev/${install_device}" 2>/dev/null || echo "  /dev/${install_device}"
+  done
+  echo "Starting in 10 seconds, [CTRL]+[C] to abort"
+  sleep 10
   for install_device in "${INSTALL_TARGET_ARRAY[@]}"; do
     echo "Creating NEW GPT table: ${install_device}"
     printf "Yes\n" | parted "/dev/${install_device}" mklabel gpt ---pretend-input-tty
@@ -305,11 +333,21 @@ echo "HDD_TARGET: ${HDD_TARGET}"
 echo "HDD_TARGET_COUNT: ${HDD_TARGET_COUNT}"
 echo "--------------------------------"
 
-#GENERATE A RANDOM 32CHAR VNC PASSWORD
-MY_RANDOM_PASS="$(tr -dc 'a-zA-Z0-9' < "/dev/urandom" | fold -w 32 | head -n 1 | xargs)"
+# GENERATE A RANDOM VNC PASSWORD
+# 8 chars because that is all VNC auth actually uses
+MY_RANDOM_PASS="$(tr -dc 'a-zA-Z0-9' < "/dev/urandom" | fold -w 8 | head -n 1 | xargs)"
 
 echo ""
-echo ">> CONNECT VIA VNC TO ${MY_IP4_AND_NETMASK%/*} WITH PASSWORD ${MY_RANDOM_PASS}"
+if [ "$MY_VNC_BIND" == "127.0.0.1" ] || [ "$MY_VNC_BIND" == "localhost" ] ; then
+  echo ">> The installer VNC server listens on 127.0.0.1:5900 only."
+  echo ">> From your workstation, open a tunnel and connect to localhost:5900 :"
+  echo "     ssh -N -L 5900:127.0.0.1:5900 root@${MY_IP4_AND_NETMASK%/*}"
+else
+  echo ">> WARNING: VNC is bound to ${MY_VNC_BIND} - the VNC protocol only uses"
+  echo ">> the first 8 characters of the password. Do not expose this to the internet."
+  echo ">> CONNECT VIA VNC TO ${MY_IP4_AND_NETMASK%/*}"
+fi
+echo ">> VNC PASSWORD: ${MY_RANDOM_PASS}"
 echo "** Please use the following, install options **"
 echo "Target Harddisk: [OPTIONS]"
 if [[ $INSTALL_COUNT -ge 8 ]] ; then
@@ -326,10 +364,10 @@ echo "Gateway: ${MY_IP4_GATEWAY}"
 echo "DNS Server: ${MY_DNS_SERVER}"
 echo "********************************"
 
-echo ">> CONNECT VIA VNC TO ${MY_IP4_AND_NETMASK%/*} WITH PASSWORD ${MY_RANDOM_PASS}"
+echo ">> VNC PASSWORD: ${MY_RANDOM_PASS}"
 
 # shellcheck disable=SC2086 # DISKS is intentionally unquoted - contains multiple space-separated QEMU arguments
-printf "change vnc password\n%s\n" "${MY_RANDOM_PASS}" | qemu-system-x86_64 -machine type=q35,accel=kvm -cpu host -enable-kvm -smp 4 -m 4096 -boot d -cdrom "${INSTALL_IMAGE}" ${DISKS} -vnc :0,password -monitor stdio -no-reboot
+printf "change vnc password\n%s\n" "${MY_RANDOM_PASS}" | qemu-system-x86_64 -machine type=q35,accel=kvm -cpu host -enable-kvm -smp 4 -m 4096 -boot d -cdrom "${INSTALL_IMAGE}" ${DISKS} -vnc ${MY_VNC_BIND}:0,password -monitor stdio -no-reboot
 
 #https://blogs.oracle.com/linux/post/how-to-emulate-block-devices-with-qemu
 
@@ -345,7 +383,7 @@ else
   echo "zfsonlinux_install not detected, launching vnc to complete networking config."
   echo ">> SERVER SHOULD BE INSTALLED, RESTARTING <<"
   echo ""
-  echo ">>  RE-CONNECT VIA VNC TO ${MY_IP4_AND_NETMASK%/*} WITH PASSWORD ${MY_RANDOM_PASS}"
+  echo ">>  RE-CONNECT VIA VNC (same tunnel/address as above), PASSWORD: ${MY_RANDOM_PASS}"
   echo ""
   echo "Login as root, with the password which was set during install"
   echo ">> run the following command below"
@@ -370,7 +408,7 @@ iface vmbr0 inet static
   echo ">> run the following command below"
   echo "zpool export -f rpool"
   # shellcheck disable=SC2086 # DISKS is intentionally unquoted - contains multiple space-separated QEMU arguments
-  printf "change vnc password\n%s\n" "${MY_RANDOM_PASS}" | qemu-system-x86_64 -enable-kvm -smp 4 -m 4096 $DISKS -vnc :0,password -monitor stdio -no-reboot -serial telnet:localhost:4321,server,nowait
+  printf "change vnc password\n%s\n" "${MY_RANDOM_PASS}" | qemu-system-x86_64 -enable-kvm -smp 4 -m 4096 $DISKS -vnc ${MY_VNC_BIND}:0,password -monitor stdio -no-reboot -serial telnet:localhost:4321,server,nowait
 
 fi
 

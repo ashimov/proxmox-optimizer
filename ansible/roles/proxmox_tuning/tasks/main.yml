@@ -110,8 +110,6 @@
     state: present
     sysctl_set: true
   loop:
-    - name: kernel.core_pattern
-      value: "/var/crash/core.%t.%p"
     - name: kernel.panic
       value: "10"
     - name: kernel.panic_on_oops
@@ -125,6 +123,33 @@
     path: /etc/sysctl.d/99-xs-kernelpanic.conf
     state: absent
   when: xs_kernelpanic | lower != "yes"
+
+# Dumps of pvedaemon and friends contain cluster keys, so keep them off
+- name: Configure core dump handling
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-xs-coredump.conf
+    state: present
+    sysctl_set: true
+  loop: >-
+    {{
+      [{'name': 'kernel.core_pattern', 'value': '/var/crash/core.%t.%p'},
+       {'name': 'fs.suid_dumpable', 'value': '0'}]
+      if xs_coredump | lower == 'yes'
+      else [{'name': 'kernel.core_pattern', 'value': '|/bin/false'},
+            {'name': 'fs.suid_dumpable', 'value': '0'}]
+    }}
+  when: xs_sysctl_apply
+
+- name: Create crash directory
+  ansible.builtin.file:
+    path: /var/crash
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: xs_coredump | lower == "yes"
 
 - name: Configure max inotify watches
   ansible.posix.sysctl:
@@ -310,6 +335,12 @@
     line: 'ionice: 5'
   when: xs_vzdump | lower == "yes"
 
+# ~1/64 of RAM, clamped to 64M..1G. A flat 1G is a lot on a small host.
+- name: Compute min_free_kbytes from RAM size
+  ansible.builtin.set_fact:
+    proxmox_min_free_kbytes: "{{ [[(ram_size_gb | int * 1024 * 1024 / 64) | int, 65536] | max, 1048576] | min }}"
+  when: xs_memoryfixes | lower == "yes"
+
 - name: Configure memory sysctl
   ansible.posix.sysctl:
     name: "{{ item.name }}"
@@ -317,15 +348,14 @@
     sysctl_file: /etc/sysctl.d/99-xs-memory.conf
     state: present
     sysctl_set: true
-  loop:
-    - name: vm.min_free_kbytes
-      value: "1048576"
-    - name: vm.nr_hugepages
-      value: "72"
-    - name: vm.max_map_count
-      value: "262144"
-    - name: vm.overcommit_memory
-      value: "1"
+  loop: >-
+    {{
+      [{'name': 'vm.min_free_kbytes', 'value': proxmox_min_free_kbytes | string},
+       {'name': 'vm.max_map_count', 'value': '262144'},
+       {'name': 'vm.overcommit_memory', 'value': '1'}]
+      + ([{'name': 'vm.nr_hugepages', 'value': xs_hugepages | string}]
+         if (xs_hugepages | default('') | string | length > 0) else [])
+    }}
   when: xs_memoryfixes | lower == "yes" and xs_sysctl_apply
 
 - name: Remove memory sysctl config when disabled
@@ -408,7 +438,7 @@
     - name: net.ipv4.conf.all.accept_source_route
       value: "0"
     - name: net.ipv4.conf.all.log_martians
-      value: "0"
+      value: "1"
     - name: net.ipv4.conf.all.rp_filter
       value: "1"
     - name: net.ipv4.conf.all.secure_redirects
@@ -420,7 +450,7 @@
     - name: net.ipv4.conf.default.accept_source_route
       value: "0"
     - name: net.ipv4.conf.default.log_martians
-      value: "0"
+      value: "1"
     - name: net.ipv4.conf.default.rp_filter
       value: "1"
     - name: net.ipv4.conf.default.secure_redirects
@@ -586,37 +616,36 @@
     line: 'pigz: 1'
   when: xs_pigz | lower == "yes"
 
-- name: Create pigz wrapper script
-  ansible.builtin.copy:
-    dest: /bin/pigzwrapper
-    content: |
-      #!/bin/sh
-      # ashimov.com
-      PATH=/bin:$PATH
-      exec /usr/bin/pigz -1 "$@"
-    owner: root
-    group: root
-    mode: "0755"
+# dpkg-divert, not mv: a gzip package upgrade would undo the mv
+- name: Check for an existing gzip diversion
+  ansible.builtin.command: dpkg-divert --list /usr/bin/gzip
+  register: gzip_diversion
+  changed_when: false
+  failed_when: false
   when: xs_pigz | lower == "yes"
 
-- name: Check if original gzip exists
-  ansible.builtin.stat:
-    path: /bin/gzip.original
-  register: gzip_original
-  when: xs_pigz | lower == "yes"
-
-- name: Backup original gzip
-  ansible.builtin.command: mv -f /bin/gzip /bin/gzip.original
-  args:
-    creates: /bin/gzip.original
-  when: xs_pigz | lower == "yes" and not (gzip_original.stat.exists | default(false))
+- name: Divert the distribution gzip
+  ansible.builtin.command:
+    argv:
+      - dpkg-divert
+      - --divert
+      - /usr/bin/gzip.distrib
+      - --rename
+      - --add
+      - /usr/bin/gzip
+  when:
+    - xs_pigz | lower == "yes"
+    - "'diversion' not in (gzip_diversion.stdout | default(''))"
   changed_when: true
 
-- name: Replace gzip with pigz wrapper
+- name: Install the pigz wrapper as gzip
   ansible.builtin.copy:
-    src: /bin/pigzwrapper
-    dest: /bin/gzip
-    remote_src: yes
+    dest: /usr/bin/gzip
+    content: |
+      #!/bin/sh
+      # ashimov.com - pigz wrapper for parallel gzip
+      PATH=/bin:$PATH
+      exec /usr/bin/pigz -1 "$@"
     owner: root
     group: root
     mode: "0755"

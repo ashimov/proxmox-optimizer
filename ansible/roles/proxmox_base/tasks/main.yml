@@ -106,6 +106,18 @@
     - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
     - proxmox_repo_key_needs_download | default(false)
 
+- name: Warn if the Proxmox key checksum is not pinned
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: no SHA256 pinned for the Proxmox release key on
+      '{{ proxmox_os_codename }}'. The key will be trusted purely based on TLS.
+      Add the value to proxmox_key_checksums in inventory - obtain it with:
+      wget -qO- {{ proxmox_repo_key_url }} | sha256sum
+  when:
+    - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
+    - proxmox_repo_key_needs_download | default(false)
+    - proxmox_key_checksum | default('') | length == 0
+
 - name: Download Proxmox repository key
   ansible.builtin.get_url:
     url: "{{ proxmox_repo_key_url }}"
@@ -182,8 +194,8 @@
 - name: Normalize Proxmox repo signed-by in list files
   ansible.builtin.replace:
     path: "{{ item.path }}"
-    regexp: '^(deb\\s+\\[[^\\]]*?)signed-by=[^\\s\\]]+'
-    replace: '\\1signed-by={{ proxmox_repo_key_path }}'
+    regexp: '^(deb\s+\[[^\]]*?)signed-by=[^\s\]]+'
+    replace: '\1signed-by={{ proxmox_repo_key_path }}'
   loop: "{{ proxmox_repo_files.files }}"
   when:
     - xs_noentrepo | lower == "yes" or xs_testrepo | lower == "yes"
@@ -192,7 +204,7 @@
 - name: Normalize Proxmox repo signed-by in sources files
   ansible.builtin.replace:
     path: "{{ item.path }}"
-    regexp: '^Signed-By:\\s*\\S+'
+    regexp: '^Signed-By:\s*\S+'
     replace: 'Signed-By: {{ proxmox_repo_key_path }}'
   loop: "{{ proxmox_repo_files.files }}"
   when:

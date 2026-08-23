@@ -23,7 +23,7 @@
 # Note: will automatically run the install-post.sh script
 #
 # Usage:
-# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/debian-2-proxmox/debian12-2-proxmox8.sh && chmod +x debian12-2-proxmox8.sh
+# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/debian-2-proxmox/debian12-2-proxmox8.sh && chmod +x debian12-2-proxmox8.sh
 # ./debian12-2-proxmox8.sh
 #
 ################################################################################
@@ -35,6 +35,14 @@
 set -e
 set -o pipefail
 
+# Create an admin@pve account with the Administrator role (default: no).
+# When enabled, a password MUST be available (XS_ADMIN_PASSWORD or a TTY).
+XS_CREATE_ADMIN_USER="${XS_CREATE_ADMIN_USER:-no}"
+XS_ADMIN_PASSWORD="${XS_ADMIN_PASSWORD:-}"
+# Allow downloading install-post.sh from GitHub (requires XS_INSTALL_POST_SHA256)
+XS_ALLOW_REMOTE_INSTALL_POST="${XS_ALLOW_REMOTE_INSTALL_POST:-no}"
+XS_INSTALL_POST_SHA256="${XS_INSTALL_POST_SHA256:-}"
+
 # Require root
 if [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: This script must be run as root"
@@ -44,7 +52,7 @@ fi
 # Set the local
 export LANG="en_US.UTF-8"
 export LC_ALL="C"
-sh -c "echo -e 'LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8' > /etc/default/locale"
+printf 'LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8\n' > /etc/default/locale
 
 # Create lock dir for aptitude
 if [ ! -d "/run/lock" ] ; then
@@ -58,6 +66,7 @@ if [ ! -f /etc/os-release ]; then
   exit 1
 fi
 
+# shellcheck disable=SC1091
 source /etc/os-release
 if [ "$VERSION_CODENAME" != "bookworm" ]; then
   echo "ERROR: This script is for Debian 12 (Bookworm) only"
@@ -91,7 +100,7 @@ echo "Removing conflicting packages"
 apt-get clean all
 
 echo "Auto detecting existing network settings"
-default_interface="$(ip route | awk '/default/ { print $5; exit }' | grep -v "vmbr")"
+default_interface="$(ip route | awk '/default/ { print $5; exit }' | grep -v "vmbr" || true)"
 if [ "$default_interface" == "" ]; then
   # Filter the interfaces to get the default interface and which is not down and not a virtual bridge
   default_interface="$(ip link | sed -e '/state DOWN / { N; d; }' | sed -e '/veth[0-9].*:/ { N; d; }' | sed -e '/vmbr[0-9].*:/ { N; d; }' | sed -e '/tap[0-9].*:/ { N; d; }' | sed -e '/lo:/ { N; d; }' | head -n 1 | cut -d':' -f 2 | xargs)"
@@ -161,7 +170,17 @@ echo "Installing proxmox-ve"
 /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::='--force-confdef' install -y proxmox-ve
 
 echo "Remove legacy kernel"
-/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' remove linux-image-amd64 'linux-image-6.*'
+# apt treats 'linux-image-6.*' as a regex, which can eat the running kernel.
+# List the Debian ones explicitly instead.
+running_kernel="$(uname -r)"
+mapfile -t debian_kernels < <(dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 2>/dev/null \
+  | grep -v -- '-pve' | grep -vF "linux-image-${running_kernel}" || true)
+if [ "${#debian_kernels[@]}" -gt 0 ]; then
+  echo "Removing Debian kernels: ${debian_kernels[*]}"
+  /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' purge linux-image-amd64 "${debian_kernels[@]}" || true
+else
+  echo "No Debian-shipped kernel packages to remove"
+fi
 
 echo "Force grub to update"
 update-grub
@@ -174,14 +193,37 @@ rm -f /etc/apt/sources.list.d/pve-enterprise.list
 
 echo "Done installing Proxmox VE 8"
 
-echo "Creating admin user"
-pveum groupadd admin -comment "System Administrators" 2>/dev/null || true
-pveum aclmod / -group admin -role Administrator
-pveum useradd admin@pve -comment "Admin" 2>/dev/null || true
-pveum usermod admin@pve -group admin
+if [ "${XS_CREATE_ADMIN_USER,,}" == "yes" ] ; then
+  echo "Creating admin user"
+  pveum groupadd admin -comment "System Administrators" 2>/dev/null || true
+  pveum aclmod / -group admin -role Administrator
+  pveum useradd admin@pve -comment "Admin" 2>/dev/null || true
+  pveum usermod admin@pve -group admin
+
+  # Set the password now, not at the end: a failure later would leave an
+  # Administrator account sitting there without one.
+  if [ "$XS_ADMIN_PASSWORD" != "" ] ; then
+    echo "Setting admin@pve password from XS_ADMIN_PASSWORD"
+    printf '%s\n%s\n' "$XS_ADMIN_PASSWORD" "$XS_ADMIN_PASSWORD" | pveum passwd admin@pve
+  elif [ -t 0 ] ; then
+    echo "Setting admin@pve password"
+    pveum passwd admin@pve
+  else
+    echo "ERROR: admin@pve was created but no password can be set (non-interactive run)."
+    echo "       Set XS_ADMIN_PASSWORD, or remove the user with: pveum user delete admin@pve"
+    pveum user delete admin@pve 2>/dev/null || true
+    echo "       The incomplete admin@pve account has been removed."
+  fi
+else
+  echo "Skipping admin@pve creation (set XS_CREATE_ADMIN_USER=yes to enable)"
+fi
 
 echo "Preparing postinstall script"
-install_post_path="./install-post.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install_post_path="${SCRIPT_DIR}/../install-post.sh"
+if [ ! -f "$install_post_path" ]; then
+  install_post_path="./install-post.sh"
+fi
 if [ -f "$install_post_path" ]; then
   echo "Using local install-post.sh"
 else
@@ -192,7 +234,7 @@ else
       exit 1
     fi
     if ! wget --quiet --fail --timeout=30 --tries=3 \
-         https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh \
+         https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh \
          -O "$install_post_path" ; then
       echo "ERROR: Failed to download install-post.sh"
       rm -f "$install_post_path"
@@ -212,6 +254,3 @@ fi
 if [ "$install_post_path" != "" ] && [ -f "$install_post_path" ] && grep -q '#!/usr/bin/env bash' "$install_post_path"; then
   bash "$install_post_path"
 fi
-
-echo "Setting admin user password"
-pveum passwd admin@pve

@@ -3,16 +3,17 @@
   ansible.builtin.set_fact:
     proxmox_zfs_ram_size_gb: "{{ (ansible_memtotal_mb / 1024) | int }}"
 
+# Keep MIN well under MAX, otherwise the ARC cannot shrink under pressure
 - name: Set ZFS ARC values for small memory
   ansible.builtin.set_fact:
-    proxmox_zfs_arc_min_raw: 536870911
-    proxmox_zfs_arc_max_raw: 536870912
+    proxmox_zfs_arc_min_raw: 268435456    # 256 MB
+    proxmox_zfs_arc_max_raw: 536870912    # 512 MB
   when: proxmox_zfs_ram_size_gb | int <= 16
 
 - name: Set ZFS ARC values for medium memory
   ansible.builtin.set_fact:
-    proxmox_zfs_arc_min_raw: 1073741823
-    proxmox_zfs_arc_max_raw: 1073741824
+    proxmox_zfs_arc_min_raw: 536870912    # 512 MB
+    proxmox_zfs_arc_max_raw: 1073741824   # 1 GB
   when: proxmox_zfs_ram_size_gb | int > 16 and proxmox_zfs_ram_size_gb | int <= 32
 
 - name: Set ZFS ARC values for large memory
@@ -21,10 +22,17 @@
     proxmox_zfs_arc_max_raw: "{{ (proxmox_zfs_ram_size_gb | int * 1073741824 / 8) | int }}"
   when: proxmox_zfs_ram_size_gb | int > 32
 
-- name: Enforce ZFS ARC minimums
+- name: Enforce ZFS ARC floors
   ansible.builtin.set_fact:
-    proxmox_zfs_arc_min: "{{ [proxmox_zfs_arc_min_raw | int, 536870911] | max }}"
+    proxmox_zfs_arc_min: "{{ [proxmox_zfs_arc_min_raw | int, 268435456] | max }}"
     proxmox_zfs_arc_max: "{{ [proxmox_zfs_arc_max_raw | int, 536870912] | max }}"
+
+- name: Assert ZFS ARC min is below max
+  ansible.builtin.assert:
+    that:
+      - proxmox_zfs_arc_min | int < proxmox_zfs_arc_max | int
+    fail_msg: "zfs_arc_min ({{ proxmox_zfs_arc_min }}) must be smaller than zfs_arc_max ({{ proxmox_zfs_arc_max }})"
+    quiet: true
 
 - name: Configure ZFS ARC tuning
   ansible.builtin.copy:

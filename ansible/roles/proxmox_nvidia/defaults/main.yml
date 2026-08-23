@@ -1,23 +1,31 @@
 ---
 # proxmox_nvidia role defaults
 # ============================================================================
-# Configures NVIDIA Docker runtime for GPU passthrough support
+# Installs the NVIDIA Container Toolkit so Docker can use the host GPU.
+#
+# The old nvidia-docker / nvidia-docker2 repository is end-of-life and does not
+# publish packages for Debian 12/13. The libnvidia-container repository used
+# here is distribution independent (no per-distro path).
 # ============================================================================
 
-# NVIDIA Docker configuration
+# NVIDIA container runtime configuration
 nvidia_docker_enabled: true
 
 # Whether to reboot after installation
 nvidia_docker_reboot: false
 
-# NVIDIA repository base URL
-nvidia_docker_repo_url: "https://nvidia.github.io/nvidia-docker"
+# Signing key and repository list
+nvidia_toolkit_gpg_url: "https://nvidia.github.io/libnvidia-container/gpgkey"
+nvidia_toolkit_list_url: "https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list"
 
-# GPG key URL
-nvidia_docker_gpg_url: "https://nvidia.github.io/nvidia-docker/gpgkey"
+# Where the dearmored key is stored
+nvidia_toolkit_keyring: "/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
 
-# Optional pinned SHA256 of the NVIDIA Docker GPG key and the per-distro
-# repository .list file. Strongly recommended — leave empty only if you
-# accept TLS-only trust for these supply-chain inputs.
-nvidia_docker_gpg_sha256: ""
-nvidia_docker_list_sha256: ""
+# Optional pinned SHA256 of the signing key and the repository list.
+# Strongly recommended - leave empty only if you accept TLS-only trust for
+# these supply-chain inputs (a runtime warning is emitted when unset).
+nvidia_toolkit_gpg_sha256: ""
+nvidia_toolkit_list_sha256: ""
+
+# Configure the Docker daemon to use the NVIDIA runtime (nvidia-ctk)
+nvidia_configure_docker_runtime: true

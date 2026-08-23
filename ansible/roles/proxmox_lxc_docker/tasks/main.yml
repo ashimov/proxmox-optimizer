@@ -16,7 +16,6 @@
           - Disabling AppArmor confinement (lxc.apparmor.profile: unconfined)
           - Allowing access to all devices (lxc.cgroup.devices.allow: a)
           - Dropping no capabilities (lxc.cap.drop: empty)
-          - Loading kernel modules (aufs, ip_tables)
           - Mounting proc and sys as read-write
 
         RISKS:
@@ -40,6 +39,16 @@
       You must explicitly confirm you understand the security implications.
       Set lxc_docker_confirm: true in your playbook or inventory.
   when: not lxc_docker_confirm
+
+# The id goes into a path and into pct arguments
+- name: Validate container ID
+  ansible.builtin.assert:
+    that:
+      - lxc_docker_container_id | string is match('^[0-9]+$')
+      - (lxc_docker_container_id | int) >= 100
+      - (lxc_docker_container_id | int) <= 999999999
+    fail_msg: "lxc_docker_container_id must be numeric and between 100 and 999999999"
+    quiet: true
 
 - name: Set container config path
   ansible.builtin.set_fact:
@@ -74,15 +83,24 @@
   register: lxc_config_changed
 
 - name: Stop container for restart
-  ansible.builtin.command: "pct stop {{ lxc_docker_container_id }}"
+  ansible.builtin.command:
+    argv:
+      - pct
+      - stop
+      - "{{ lxc_docker_container_id }}"
+  register: lxc_stop_result
   when:
     - lxc_docker_restart_container
     - lxc_config_changed.changed
-  changed_when: true
+  changed_when: lxc_stop_result.rc == 0
   failed_when: false
 
 - name: Start container
-  ansible.builtin.command: "pct start {{ lxc_docker_container_id }}"
+  ansible.builtin.command:
+    argv:
+      - pct
+      - start
+      - "{{ lxc_docker_container_id }}"
   when:
     - lxc_docker_restart_container
     - lxc_config_changed.changed

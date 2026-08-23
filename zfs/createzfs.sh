@@ -35,7 +35,7 @@
 # NOTE: WILL  DESTROY ALL DATA ON DEVICES SPECIFED
 #
 # Usage:
-# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/createzfs.sh && chmod +x createzfs.sh
+# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/createzfs.sh && chmod +x createzfs.sh
 # ZFS_CONFIRM=yes ./createzfs.sh poolname /dev/sda /dev/sdb
 # ZFS_DRYRUN=yes ./createzfs.sh poolname /dev/sda /dev/sdb
 #
@@ -46,8 +46,8 @@
 #
 ##############################################################
 
-#/dev/md3              4.9G   20M  4.6G   1% /xshok/zfs-slog
-#/dev/md2               59G   53M   56G   1% /xshok/zfs-cache
+#/dev/md3              4.9G   20M  4.6G   1% /ashimov/zfs-slog
+#/dev/md2               59G   53M   56G   1% /ashimov/zfs-cache
 
 # Exit on error, pipe failures
 set -e
@@ -113,7 +113,8 @@ if [ "${ZFS_DRYRUN,,}" == "yes" ] ; then
 fi
 
 #add the suffix pool to the poolname, prevent namepoolpool
-poolprefix=${poolname/pool/}
+# only strip a trailing "pool", otherwise mypoolstorage -> mystoragepool
+poolprefix="${poolname%pool}"
 poolname="${poolprefix}pool"
 
 INDEX=0
@@ -164,7 +165,7 @@ for zfsdevice in "${zfsdevicearray[@]}" ; do
     if [ -n "$MY_DEV" ] && [ -e "/dev/disk/by-id/${MY_DEV}" ]; then
       echo "${zfsdevice} -> ${MY_DEV}"
       #replace current value
-      zfsdevicearray[$INDEX]="${MY_DEV}"
+      zfsdevicearray[INDEX]="${MY_DEV}"
     else
       echo "WARNING: Unable to resolve ${zfsdevice} to /dev/disk/by-id; using original path"
     fi

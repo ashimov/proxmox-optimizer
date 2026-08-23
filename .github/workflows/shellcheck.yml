@@ -6,12 +6,16 @@ name: shellcheck
     branches: [master, main]
     paths:
       - '**.sh'
+      - 'hetzner/pve'
+      - 'hetzner/pbs'
       - '.shellcheckrc'
       - '.github/workflows/shellcheck.yml'
   pull_request:
     branches: [master, main]
     paths:
       - '**.sh'
+      - 'hetzner/pve'
+      - 'hetzner/pbs'
       - '.shellcheckrc'
       - '.github/workflows/shellcheck.yml'
 
@@ -28,4 +32,7 @@ jobs:
 
       - name: Run shellcheck
         run: |
-          find . -path ./.git -prune -o -name '*.sh' -type f -print0 | xargs -0 shellcheck
+          # *.sh plus the extensionless Hetzner post-install scripts
+          find . -path ./.git -prune -o -path ./.history -prune -o -name '*.sh' -type f -print0 \
+            | xargs -0 shellcheck
+          shellcheck hetzner/pve hetzner/pbs

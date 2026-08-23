@@ -35,7 +35,7 @@
 # Assumes LVM on top of a MD raid (linux software raid)
 #
 # Usage:
-# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/lvm2zfs.sh && chmod +x lvm-2-zfs.sh
+# curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/lvm2zfs.sh && chmod +x lvm-2-zfs.sh
 # ./lvm-2-zfs.sh LVM_MOUNT_POINT
 #
 ################################################################################
@@ -145,9 +145,11 @@ else
   exit 1
 fi
 
-IFS=' ' read -r -a mddevarray <<< "$(grep -F "$MY_MD_RAID :" /proc/mdstat | cut -d ' ' -f5- | xargs)"
+# "md5 : active (auto-read-only) raid1 sda4[0]" shifts the columns, so match
+# name[index] tokens instead of cutting by field number.
+mapfile -t mddevarray < <(grep -F "$MY_MD_RAID :" /proc/mdstat | grep -oE '[a-zA-Z0-9]+\[[0-9]+\]' || true)
 
-if [ "${mddevarray[0]}" == "" ] ; then
+if [ "${#mddevarray[@]}" -eq 0 ] || [ "${mddevarray[0]}" == "" ] ; then
   echo "ERROR: no devices found for $MY_MD_RAID in /proc/mdstat"
   exit 1
 fi
@@ -164,12 +166,22 @@ else
   exit 1
 fi
 
-# remove [*] and /dev/ to each record
+# remove [*] and prefix /dev/ on each record
 echo "Creating the device array"
 for index in "${!mddevarray[@]}" ; do
     tempmddevarraystring="${mddevarray[index]}"
-    mddevarray[index]="/dev/${tempmddevarraystring%\[*\]}"
+    mddevarray[index]="/dev/${tempmddevarraystring%%\[*}"
 done
+
+# Check the list before lvremove/mdadm --stop, there is no way back after
+for MY_MD_MEMBER in "${mddevarray[@]}" ; do
+  if [ ! -b "$MY_MD_MEMBER" ] ; then
+    echo "ERROR: parsed member '${MY_MD_MEMBER}' is not a block device - aborting before any destructive step"
+    echo "Parsed members: ${mddevarray[*]}"
+    exit 1
+  fi
+done
+echo "Validated MD members: ${mddevarray[*]}"
 
 echo "Destroying LV (logical volume)"
 echo umount -l "$LVM_MOUNT_POINT"
@@ -180,8 +192,6 @@ lvremove "/dev/$MY_LV" -y 2> /dev/null
 echo "Destroying MD (linux raid)"
 echo mdadm --stop "/dev/$MY_MD_RAID"
 mdadm --stop "/dev/$MY_MD_RAID"
-echo mdadm --remove "/dev/$MY_MD_RAID"
-mdadm --remove "/dev/$MY_MD_RAID"
 
 for MY_MD_MEMBER in "${mddevarray[@]}" ; do
     echo "zeroing $MY_MD_MEMBER"

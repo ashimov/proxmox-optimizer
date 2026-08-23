@@ -2,6 +2,9 @@ Name = {{ tinc_node_name }}
 AddressFamily = ipv4
 Interface = {{ tinc_interface | default('Tun0') }}
 Mode = switch
+Cipher = {{ tinc_cipher }}
+Digest = {{ tinc_digest }}
+Compression = {{ tinc_compression }}
 {% if tinc_connect_to | length > 0 %}
 ConnectTo = {{ tinc_connect_to | replace('-', '_') }}
 {% endif %}

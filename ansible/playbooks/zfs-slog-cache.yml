@@ -7,7 +7,7 @@
 #     -e "zfs_pool_name=hddpool zfs_slog_cache_confirm=true"
 #
 - name: Convert MD RAID to ZFS SLOG/cache
-  hosts: proxmox_nodes
+  hosts: proxmox
   become: true
 
   vars_prompt:
