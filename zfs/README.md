@@ -86,11 +86,13 @@ Dry-run prints planned actions and exits non-zero without changes.
 
 ## slog-cache-2-zfs.sh
 
-Converts MD RAID arrays mounted at `/xshok/zfs-cache` and `/xshok/zfs-slog` to ZFS cache (L2ARC) and SLOG devices.
+Converts MD RAID arrays mounted at `/ashimov/zfs-cache` and `/ashimov/zfs-slog`
+to ZFS cache (L2ARC) and SLOG devices. Those are the paths the Hetzner
+installimage script creates, so the two line up.
 
 ### Prerequisites
 
-- MD RAID arrays mounted at `/xshok/zfs-cache` and/or `/xshok/zfs-slog`
+- MD RAID arrays mounted at `/ashimov/zfs-cache` and/or `/ashimov/zfs-slog`
 - Existing ZFS pool to add devices to
 
 ### Usage
@@ -99,7 +101,12 @@ Converts MD RAID arrays mounted at `/xshok/zfs-cache` and `/xshok/zfs-slog` to Z
 ./slog-cache-2-zfs.sh [poolname]
 ```
 
-Default pool name is `hddpool` if not specified.
+Default pool name is `hddpool` if not specified. A missing mount point is
+skipped, so a host with only a slog partition works fine.
+
+The array is only torn down after the member list has been parsed out of
+`/proc/mdstat` and every member checked to be a real block device. If the parse
+looks wrong the script stops before unmounting anything.
 
 ## benchmark_zfs.sh
 
@@ -108,8 +115,13 @@ Runs ZFS write performance benchmarks (4K and 1M blocks).
 ### Usage
 
 ```bash
+cd /path/to/zfs/dataset
 ./benchmark_zfs.sh
 ```
+
+It writes roughly 20 GB of test files into the current directory and removes
+them afterwards, so run it from the pool you want to measure. It refuses to run
+outside a ZFS filesystem.
 
 ---
 

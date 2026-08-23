@@ -4,7 +4,12 @@
 
 ## Overview
 
-Scripts and instructions for enabling NVIDIA GPU support on Proxmox VE hosts, including Docker integration.
+Scripts and instructions for enabling NVIDIA GPU support on Proxmox VE hosts,
+including Docker integration through the NVIDIA Container Toolkit.
+
+Note that running the GPU on the hypervisor itself and passing it through to a
+VM are mutually exclusive. If you want VFIO passthrough, do not install the
+driver on the host.
 
 > **Recommended:** Use Ansible roles for repeatable, idempotent deployments.
 > See [ansible/README.md](../ansible/README.md) for details.
@@ -13,19 +18,27 @@ Scripts and instructions for enabling NVIDIA GPU support on Proxmox VE hosts, in
 
 | Role | Description | Playbook |
 |------|-------------|----------|
-| `proxmox_nvidia` | NVIDIA Docker runtime for GPU passthrough | `playbooks/nvidia-docker.yml` |
+| `proxmox_nvidia` | NVIDIA Container Toolkit for Docker | `playbooks/nvidia-docker.yml` |
 
 ### Ansible Usage
 
 ```bash
 cd ansible
 
-# Install NVIDIA Docker runtime
-ansible-playbook playbooks/nvidia-docker.yml -i inventory/hosts.ini
+# Install the container toolkit and wire it into Docker
+ansible-playbook playbooks/nvidia-docker.yml
 
-# Skip reboot
-ansible-playbook playbooks/nvidia-docker.yml -i inventory/hosts.ini -e nvidia_docker_reboot=false
+# Reboot afterwards (off by default)
+ansible-playbook playbooks/nvidia-docker.yml -e nvidia_docker_reboot=true
 ```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `nvidia_docker_enabled` | `true` | Set to false to skip the role |
+| `nvidia_docker_reboot` | `false` | Reboot after installation |
+| `nvidia_configure_docker_runtime` | `true` | Run `nvidia-ctk runtime configure --runtime=docker` |
+| `nvidia_toolkit_gpg_sha256` | empty | Pinned checksum of the signing key |
+| `nvidia_toolkit_list_sha256` | empty | Pinned checksum of the repo list file |
 
 ## Prerequisites
 
@@ -39,12 +52,19 @@ update-grub
 
 ### 1. Download NVIDIA Driver
 
+Pick the current version from
+[nvidia.com/drivers](https://www.nvidia.com/en-us/drivers/unix/) - the example
+below is only the shape of the command, not a version recommendation.
+
 ```bash
-# Get the latest driver from NVIDIA
-wget https://us.download.nvidia.com/XFree86/Linux-x86_64/460.56/NVIDIA-Linux-x86_64-460.56.run
-chmod +x NVIDIA-Linux-x86_64-460.56.run
-./NVIDIA-Linux-x86_64-460.56.run
+VER=550.127.05
+wget https://us.download.nvidia.com/XFree86/Linux-x86_64/${VER}/NVIDIA-Linux-x86_64-${VER}.run
+chmod +x NVIDIA-Linux-x86_64-${VER}.run
+./NVIDIA-Linux-x86_64-${VER}.run
 ```
+
+The driver has to be rebuilt after every kernel upgrade unless you install it
+with DKMS.
 
 ### 2. Installer Prompts
 
@@ -98,11 +118,28 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
 | Script | Description |
 |--------|-------------|
-| `nvidia-docker.sh` | Installs nvidia-docker2 for GPU container support |
+| `nvidia-docker.sh` | Installs `nvidia-container-toolkit` and reloads Docker |
+
+The old `nvidia-docker2` package and the `nvidia.github.io/nvidia-docker`
+repository are end of life and publish nothing for Debian 12/13. The script uses
+the `libnvidia-container` repository instead, which is not per-distribution, and
+removes the old repo file if a previous run added it.
+
+```bash
+# no reboot (default)
+./nvidia-docker.sh
+
+# with a pinned key checksum
+NVIDIA_TOOLKIT_GPG_SHA256=<sha256> ./nvidia-docker.sh
+
+# reboot when done
+NVIDIA_DOCKER_REBOOT=yes ./nvidia-docker.sh
+```
 
 ### Fan Control Example
 
-> **Note:** Replace `121` with your actual user ID from `/run/user/`.
+> Replace `121` with the actual user ID from `/run/user/`. These commands need
+> an X session, which a headless Proxmox host does not normally have.
 
 ```bash
 # Set fan speed to 80-85% for GPUs 0-3

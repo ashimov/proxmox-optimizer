@@ -45,7 +45,7 @@
 | Option | Value |
 |--------|-------|
 | Hostname | `server.fqdn.com` |
-| Installation script | `https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh` |
+| Installation script | `https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh` |
 | Script return value | `0` |
 | SSH keys | *(optional but recommended)* |
 
@@ -60,7 +60,7 @@ After installation, connect via SSH to your Proxmox server.
 ### 1. LVM to ZFS Conversion
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/lvm-2-zfs.sh -c -O lvm-2-zfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/lvm-2-zfs.sh -O lvm-2-zfs.sh
 chmod +x lvm-2-zfs.sh
 ./lvm-2-zfs.sh && rm lvm-2-zfs.sh
 # REBOOT
@@ -69,7 +69,7 @@ chmod +x lvm-2-zfs.sh
 ### 2. Network Configuration (vmbr0)
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh -c -O network-configure.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/networking/network-configure.sh -O network-configure.sh
 chmod +x network-configure.sh
 ./network-configure.sh && rm network-configure.sh
 # REBOOT
@@ -87,14 +87,14 @@ passwd root
 
 ## 🚀 Advanced Installation
 
-For setups with SSD raid1 partitions mounted as `/xshok/zfs-slog` and `/xshok/zfs-cache` with unused HDDs.
+For setups with SSD raid1 partitions mounted as `/ashimov/zfs-slog` and `/ashimov/zfs-cache` with unused HDDs.
 
 ### Create ZFS from Unused Devices
 
 ⚠️ **WARNING: DESTROYS ALL DATA ON SPECIFIED DEVICES**
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/createzfs.sh -c -O createzfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/createzfs.sh -O createzfs.sh
 chmod +x createzfs.sh
 ZFS_CONFIRM=yes ./createzfs.sh poolname /dev/device1 /dev/device2
 ZFS_DRYRUN=yes ./createzfs.sh poolname /dev/device1 /dev/device2
@@ -105,11 +105,14 @@ ZFS_DRYRUN=yes ./createzfs.sh poolname /dev/device1 /dev/device2
 ⚠️ **WARNING: DESTROYS ALL DATA ON SPECIFIED PARTITIONS**
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/slog-cache-2-zfs.sh -c -O slog-cache-2-zfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/slog-cache-2-zfs.sh -O slog-cache-2-zfs.sh
 chmod +x slog-cache-2-zfs.sh
 ./slog-cache-2-zfs.sh poolname
 # REBOOT
 ```
+
+The pool has to exist already: the script adds cache/log vdevs to it, it does
+not create pools.
 
 ---
 
@@ -120,8 +123,8 @@ For SSD + HDD configurations:
 | Partition | Filesystem | Mount Point | Size | Notes |
 |-----------|------------|-------------|------|-------|
 | Root | ext4 (RAID1) | / | 20-40 GB | SSD |
-| ZFS Cache | ext4 (RAID1) | /xshok/zfs-cache | 30 GB | SSD |
-| ZFS SLOG | ext4 (RAID1) | /xshok/zfs-slog | 5 GB | SSD |
+| ZFS Cache | ext4 (RAID1) | /ashimov/zfs-cache | 30 GB | SSD |
+| ZFS SLOG | ext4 (RAID1) | /ashimov/zfs-slog | 5 GB | SSD |
 | Swap | swap | - | 16-64 GB | Based on RAM |
 | Data | xfs (LVM) | /var/lib/vz | Remaining | HDD pool |
 

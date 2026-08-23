@@ -142,16 +142,32 @@ All variables are documented in `inventory/group_vars/all.yml`. Key variables:
 ### VFIO
 - `xs_vfio_iommu`: Enable IOMMU/VFIO (default: "yes")
 
+### Safety and hardening knobs
+
+- `xs_coredump`: Write kernel core dumps to `/var/crash` (default: `"no"`). A dump
+  of a Proxmox daemon contains cluster keys and auth tickets in cleartext.
+- `xs_hugepages`: Number of hugepages to preallocate (default: empty = none).
+- `xs_lynis_key_sha256`, `proxmox_key_checksums`: Pin the APT signing keys.
+- `zfs_slog_cache_confirm`, `lxc_docker_confirm`, `dangerous_confirm`: Required
+  before any destructive playbook does anything.
+
 ### LXC Docker (Security-Sensitive)
 
 - `lxc_docker_container_id`: Container ID to configure (required)
 - `lxc_docker_confirm`: Must be `true` to proceed (default: false)
 - `lxc_docker_restart_container`: Restart container after config (default: true)
 
-### NVIDIA Docker
+### NVIDIA Container Toolkit
 
-- `nvidia_docker_enabled`: Enable NVIDIA Docker installation (default: true)
+Installs `nvidia-container-toolkit` from the `libnvidia-container` repository.
+The old `nvidia-docker2` package and its repository are end-of-life and publish
+nothing for Debian 12/13.
+
+- `nvidia_docker_enabled`: Enable installation (default: true)
 - `nvidia_docker_reboot`: Reboot after installation (default: false)
+- `nvidia_configure_docker_runtime`: Run `nvidia-ctk runtime configure` (default: true)
+- `nvidia_toolkit_gpg_sha256` / `nvidia_toolkit_list_sha256`: Pinned SHA256 of the
+  signing key and repository list (empty = TLS only, warns at runtime)
 
 ### Networking
 - `proxmox_configure_networking`: Enable networking configuration (default: "no")
@@ -160,17 +176,29 @@ All variables are documented in `inventory/group_vars/all.yml`. Key variables:
 ### ZFS SLOG/Cache (Destructive)
 
 - `zfs_pool_name`: ZFS pool to add SLOG/cache to (default: "hddpool")
-- `zfs_cache_mount_point`: MD RAID mount for cache (default: "/xshok/zfs-cache")
-- `zfs_slog_mount_point`: MD RAID mount for SLOG (default: "/xshok/zfs-slog")
+- `zfs_cache_mount_point`: MD RAID mount for cache (default: "/ashimov/zfs-cache")
+- `zfs_slog_mount_point`: MD RAID mount for SLOG (default: "/ashimov/zfs-slog")
 - `zfs_slog_cache_confirm`: Must be `true` to proceed (default: false)
 
 ### Tinc VPN
 
-- `tinc_network_name`: VPN network name (default: "xsvpn")
+- `tinc_network_name`: VPN network name (default: "pvemesh")
 - `tinc_vpn_ip_last`: Last octet of VPN IP for this host (required per-host)
 - `tinc_connect_to`: Hostname to connect to in mesh (required per-host)
 - `tinc_port`: Tinc port (default: 655)
 - `tinc_public_ip`: Public IP (auto-detected if not set)
+- `tinc_cipher` / `tinc_digest`: Tunnel crypto (defaults: `aes-256-cbc` / `sha256`).
+  The tinc 1.0 legacy protocol otherwise falls back to blowfish/SHA1. **Every node
+  in the mesh must use the same values.** Changing them breaks an existing mesh
+  until every node is updated.
+- `tinc_compression`: Compression level (default: `0`, off). Compressing before
+  encryption leaks information about the plaintext.
+- `tinc_hosts`: Other nodes in the mesh. Every field is validated before it is
+  templated into a host config file.
+
+> **Breaking change in 1.0.4:** the default network name changed, so the config
+> directory is now `/etc/tinc/pvemesh` and the unit is `tinc-pvemesh.service`.
+> Set `tinc_network_name` to the previous value to keep an existing mesh running.
 
 ### Providers
 - `proxmox_provider`: Set to "ovh" or "hetzner" to enable provider-specific tasks
@@ -184,9 +212,17 @@ Store provider credentials in host_vars when possible.
 ## CI/CD
 
 The project includes GitHub Actions workflows for:
-- **Shellcheck**: Linting shell scripts
+- **Shellcheck**: Lints every `*.sh` plus the extensionless `hetzner/pve` and
+  `hetzner/pbs`, at `severity=style` (the tree is clean at that level)
 - **Ansible-lint**: Linting Ansible playbooks and roles
 - **YAML lint**: Validating YAML syntax
-- **Molecule**: Basic Ansible test scaffold
+- **Molecule**: Syntax checks, plus a `--list-hosts` gate that fails when a
+  playbook targets a group that does not exist in the inventory, and a guard
+  against reintroducing legacy project identifiers
+
+### Inventory
+
+`inventory/hosts.ini` is git-ignored: copy `inventory/hosts.ini.example` and fill
+in real addresses. Every playbook targets the `[proxmox]` group.
 
 Workflows are blocking.

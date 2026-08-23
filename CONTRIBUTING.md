@@ -135,12 +135,22 @@ fi
 /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install package
 ```
 
+### Ansible
+
+- One source of truth per behaviour. If a shell script and a role do the same
+  thing, change both in the same commit.
+- Validate anything from inventory before templating it into a config file or
+  passing it to a command. Use `argv:` rather than a shell string.
+- Watch the quoting on regexes. In single-quoted YAML a doubled backslash stays
+  doubled, so `\\s` reaches Python as backslash-backslash-s and the pattern
+  matches nothing at all, quietly. Use double quotes or single backslashes.
+
 ### Documentation
 
 - Use Markdown for all documentation
 - Include code examples with proper syntax highlighting
 - Keep instructions clear and step-by-step
-- Update README when adding new features
+- Update README and CHANGELOG when adding new features
 
 ---
 
@@ -157,20 +167,37 @@ Before submitting, please test your changes:
 ### Test Checklist
 
 - [ ] Script runs without errors
-- [ ] No shellcheck warnings (if applicable)
-- [ ] Works on fresh installation
+- [ ] shellcheck is clean (the repo is clean at `severity=style`)
+- [ ] Works on a fresh installation
 - [ ] Doesn't break existing functionality
-- [ ] Documentation updated
+- [ ] Documentation and CHANGELOG updated
 
-### Running ShellCheck
+### What CI runs
 
 ```bash
-# Install shellcheck
-apt-get install shellcheck
+# shellcheck: *.sh plus the two extensionless Hetzner scripts
+find . -path ./.git -prune -o -name '*.sh' -type f -print0 | xargs -0 shellcheck
+shellcheck hetzner/pve hetzner/pbs
 
-# Check a script
-shellcheck your-script.sh
+# yaml
+yamllint -c .yamllint.yml ansible/ .github/workflows/
+
+# ansible
+cd ansible
+ansible-lint -c ../.ansible-lint playbooks/ roles/
+molecule test --scenario-name default
 ```
+
+Molecule syntax-checks every playbook, resolves each one against
+`inventory/hosts.ini.example` and fails if a play matches no hosts. If you add a
+playbook, add it to `molecule/default/verify.yml` too.
+
+### Destructive scripts
+
+Anything that touches disks or `/etc/network/interfaces` needs a confirmation
+variable and a preflight report. Follow what `zfs/createzfs.sh` and
+`playbooks/zfs-create.yml` do: refuse to run without the flag, print what is
+about to happen, and validate the device list before destroying anything.
 
 ---
 

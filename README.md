@@ -55,15 +55,43 @@
 
 ## 🚀 Quick Start
 
-### One-Line Installation
+### Installation
 
-Run this command on a fresh Proxmox installation to apply all optimizations:
+The scripts run as **root** and reconfigure the host. Download, verify, then
+execute - never pipe an unverified script from the network into a shell.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh -c -O install-post.sh && bash install-post.sh && rm install-post.sh
+# 1. Pick a release tag (not 'master': that branch moves under you)
+RELEASE="v1.0.4"
+BASE="https://raw.githubusercontent.com/ashimov/proxmox-optimizer/${RELEASE}"
+
+# 2. Download the script and the published checksum list
+wget "${BASE}/install-post.sh" -O install-post.sh
+wget "https://github.com/ashimov/proxmox-optimizer/releases/download/${RELEASE}/SHA256SUMS" -O SHA256SUMS
+
+# 3. Verify BEFORE running anything
+sha256sum --ignore-missing -c SHA256SUMS
+
+# 4. Only then execute
+bash install-post.sh
 ```
 
+> ⚠️ **Do not use `wget -c`** when fetching these scripts. If a partial file is
+> already present, `-c` appends to it and you end up executing a spliced script.
+
 > 💡 **Note:** Reboot after installation to apply all changes.
+
+<details>
+<summary>Cloning the repository instead (recommended for Ansible users)</summary>
+
+```bash
+git clone --branch v1.0.4 https://github.com/ashimov/proxmox-optimizer.git
+cd proxmox-optimizer
+git verify-tag v1.0.4    # if the tag is signed
+bash install-post.sh
+```
+
+</details>
 
 ---
 
@@ -85,7 +113,7 @@ cd ansible
 # Install required collections
 ansible-galaxy collection install -r collections/requirements.yml
 
-# Configure inventory
+# Configure inventory (hosts.ini itself is git-ignored)
 cp inventory/hosts.ini.example inventory/hosts.ini
 nano inventory/hosts.ini
 
@@ -104,7 +132,7 @@ ansible-playbook playbooks/proxmox.yml -i inventory/hosts.ini
 | `proxmox_vfio`          | IOMMU, VFIO for PCIe passthrough           |
 | `proxmox_networking`    | vmbr0 routed bridge configuration          |
 | `proxmox_lxc_docker`    | Docker support for LXC containers          |
-| `proxmox_nvidia`        | NVIDIA Docker runtime for GPU passthrough  |
+| `proxmox_nvidia`        | NVIDIA Container Toolkit for Docker        |
 | `proxmox_zfs_slog_cache`| Convert MD RAID to ZFS SLOG/cache          |
 | `proxmox_tinc_vpn`      | Tinc VPN mesh network for clusters         |
 | `provider_ovh`          | OVH RTM installer, auto-detection          |
@@ -119,20 +147,25 @@ All variables can be customized in `inventory/group_vars/all.yml`:
 xs_fail2ban: "yes"
 xs_disablerpc: "yes"
 xs_lynis: "yes"
+xs_coredump: "no"
 
 # Performance
 xs_tcpbbr: "yes"
 xs_ksmtuned: "yes"
 xs_pigz: "yes"
+xs_hugepages: ""      # page count, empty = do not preallocate
 
 # ZFS
 xs_zfsarc: "yes"
 xs_zfsautosnapshot: "no"
 ```
 
+The full list with defaults is in `inventory/group_vars/all.yml` and in each
+role's `defaults/main.yml`.
+
 ### Dangerous Operations
 
-> ⚠️ **DESTRUCTIVE — DATA LOSS RISK**
+> ⚠️ **DESTRUCTIVE: DATA LOSS RISK**
 >
 > The playbooks below rewrite block devices, partition tables, or network
 > configuration. A typo in inventory or a stale `dangerous_confirm` will
@@ -143,7 +176,7 @@ xs_zfsautosnapshot: "no"
 > - Keep an out-of-band console (IPMI, KVM, rescue mode) open.
 
 ```bash
-# Network configuration (overwrites /etc/network/interfaces — can break SSH)
+# Network configuration (overwrites /etc/network/interfaces, can break SSH)
 ansible-playbook playbooks/network-configure.yml -e dangerous_confirm=yes
 
 # LVM to ZFS conversion (DESTROYS LVM data)
@@ -152,21 +185,37 @@ ansible-playbook playbooks/lvm-to-zfs.yml -e dangerous_confirm=yes
 # ZFS pool creation (wipes target devices)
 ansible-playbook playbooks/zfs-create.yml -e dangerous_confirm=yes
 
-# ZFS SLOG/cache (converts MD RAID — DESTRUCTIVE!)
+# ZFS SLOG/cache (destroys the MD arrays it converts)
 ansible-playbook playbooks/zfs-slog-cache.yml -e zfs_slog_cache_confirm=true
 
 # Docker in LXC (security-sensitive: drops most container isolation)
 ansible-playbook playbooks/lxc-docker.yml -e lxc_docker_container_id=100 -e lxc_docker_confirm=true
 ```
 
-### Tinc VPN Mesh Setup
-
-Deploy Tinc VPN across multiple nodes:
+The shell scripts have their own gates, so running them by hand needs the
+matching variable:
 
 ```bash
-# Configure inventory with per-host variables
+LVM2ZFS_CONFIRM=yes ./zfs/lvm-2-zfs.sh /var/lib/vz
+ZFS_CONFIRM=yes ./zfs/createzfs.sh hdd /dev/sda /dev/sdb
+ZFS_DRYRUN=yes ./zfs/createzfs.sh hdd /dev/sda /dev/sdb   # prints, changes nothing
+LXC_DOCKER_CONFIRM=yes pve-enable-lxc-docker 100
+INSTALL_CONFIRM=yes ./hetzner/installimage-proxmox.sh host.example.com
+```
+
+### Tinc VPN Mesh Setup
+
+Mesh VPN between nodes, for corosync and Ceph traffic. Config lands in
+`/etc/tinc/pvemesh`, the unit is `tinc-pvemesh.service`.
+
+Cipher and digest are pinned (`aes-256-cbc` / `sha256`) and compression is off.
+All nodes must agree on those values. Tinc 1.0 has no forward secrecy, so for a
+new deployment WireGuard is the better choice.
+
+```bash
+# Configure inventory (hosts.ini itself is git-ignored) with per-host variables
 # inventory/hosts.ini:
-# [proxmox_nodes]
+# [proxmox]
 # node1 tinc_vpn_ip_last=1 tinc_connect_to=node2
 # node2 tinc_vpn_ip_last=2 tinc_connect_to=node3
 # node3 tinc_vpn_ip_last=3 tinc_connect_to=node1
@@ -188,9 +237,9 @@ ansible-playbook playbooks/proxmox.yml --ask-vault-pass
 
 ### Documentation
 
-- [ansible/README.md](ansible/README.md) - Full Ansible documentation
-- [MIGRATION.md](MIGRATION.md) - Migration guide from shell scripts
-- [ansible/playbooks/README.md](ansible/playbooks/README.md) - Playbook reference
+- [ansible/README.md](ansible/README.md) - roles, variables, secrets
+- [ansible/playbooks/README.md](ansible/playbooks/README.md) - playbook reference
+- [CHANGELOG.md](CHANGELOG.md) - what changed and what breaks
 
 ## 💡 Features
 
@@ -201,19 +250,20 @@ The post-installation script (`install-post.sh`) transforms your Proxmox host wi
 <td width="50%">
 
 ### 🔒 Security Hardening
-- ✅ Fail2ban protection for web interface
+- ✅ Fail2ban for the web interface (journald backend, pvedaemon + pveproxy)
 - ✅ Disable portmapper/rpcbind
 - ✅ Lynis security scan tool
 - ✅ Kernel panic auto-reboot
-- ✅ Network security optimizations
+- ✅ Core dumps off by default
+- ✅ Network security sysctls
 
 ### ⚡ Performance Tuning
 - ✅ TCP BBR congestion control
 - ✅ TCP FastOpen enabled
-- ✅ Memory optimization
+- ✅ Memory reserve scaled to RAM size
 - ✅ ZFS ARC size auto-tuning
 - ✅ Vzdump backup speed increase
-- ✅ Pigz (parallel gzip) compression
+- ✅ Pigz (parallel gzip) via dpkg-divert
 
 </td>
 <td width="50%">
@@ -247,7 +297,8 @@ The main optimization script that configures over 30+ system improvements.
 
 #### Standard Installation
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh -c -O install-post.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh -O install-post.sh
+# verify against the published SHA256SUMS before running - see Quick Start
 bash install-post.sh
 ```
 
@@ -257,7 +308,7 @@ Create a configuration file for custom options:
 
 ```bash
 # Download sample configuration
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.env.sample -c -O install-post.env
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.env.sample -O install-post.env
 
 # Edit configuration
 nano install-post.env
@@ -265,6 +316,11 @@ nano install-post.env
 # Run with custom settings
 bash install-post.sh
 ```
+
+The env file is only sourced when it is owned by root, not group- or
+world-writable, not a symlink, and sitting in a directory that is itself owned
+by root and not writable by anyone else. Otherwise it is skipped with a warning,
+since sourcing it means executing it as root.
 
 #### Environment Variable Override
 
@@ -344,19 +400,24 @@ Convert a clean Debian installation to Proxmox VE.
 
 #### Debian 13 → Proxmox VE 9 ⭐ Recommended
 ```bash
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/debian-2-proxmox/debian13-2-proxmox9.sh
+curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/debian-2-proxmox/debian13-2-proxmox9.sh
 chmod +x debian13-2-proxmox9.sh
 ./debian13-2-proxmox9.sh
 ```
 
 #### Debian 12 → Proxmox VE 8
 ```bash
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/debian-2-proxmox/debian12-2-proxmox8.sh
+curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/debian-2-proxmox/debian12-2-proxmox8.sh
 chmod +x debian12-2-proxmox8.sh
 ./debian12-2-proxmox8.sh
 ```
 
-**Note:** To allow the conversion scripts to download `install-post.sh`, set `XS_ALLOW_REMOTE_INSTALL_POST=yes` and `XS_INSTALL_POST_SHA256=<expected_sha256>`.
+**Note:** the conversion scripts look for `install-post.sh` next to themselves
+first. To let them download it instead, set `XS_ALLOW_REMOTE_INSTALL_POST=yes`
+and `XS_INSTALL_POST_SHA256=<expected_sha256>`.
+
+They no longer create an `admin@pve` account by default. If you want one, set
+`XS_CREATE_ADMIN_USER=yes` and pass `XS_ADMIN_PASSWORD` for unattended runs.
 
 **Prerequisites:**
 - Clean Debian installation with valid FQDN hostname
@@ -374,33 +435,41 @@ Detailed guide for Hetzner dedicated servers: [📖 Hetzner README](hetzner/READ
 
 #### VNC Installation (Native ISO Install)
 ```bash
-# Proxmox VE 8 (default)
-curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/vnc-install-proxmox.sh
+# From the Hetzner rescue system
+curl -O https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/hetzner/vnc-install-proxmox.sh
 chmod +x vnc-install-proxmox.sh
-./vnc-install-proxmox.sh
 
-# Proxmox VE 9
-./vnc-install-proxmox.sh pve9
+# ISO checksum from https://www.proxmox.com/en/downloads
+export MY_PVE_ISO_SHA256="..."
 
-# Proxmox Backup Server
-./vnc-install-proxmox.sh pbs
+# Proxmox VE 8 (default) / VE 9 / Backup Server
+INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh
+INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh pve9
+INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh pbs
 ```
+
+The installer's VNC server listens on loopback only. Reach it with
+`ssh -N -L 5900:127.0.0.1:5900 root@<rescue-ip>` and connect to
+`localhost:5900`. VNC authentication only uses the first 8 characters of the
+password, which is why it is not exposed directly.
 
 #### Installimage Automated Installation
 ```bash
 # From Hetzner Rescue System
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/hetzner/installimage-proxmox.sh -c -O installimage-proxmox.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/hetzner/installimage-proxmox.sh -O installimage-proxmox.sh
 chmod +x installimage-proxmox.sh
 
-# Proxmox VE 8
-./installimage-proxmox.sh "your.hostname.fqdn"
+# Checksum of hetzner/pve (or hetzner/pbs), which runs inside the chroot
+export MY_POSTINSTALL_SHA256="..."
 
-# Proxmox VE 9
-./installimage-proxmox.sh "your.hostname.fqdn" pve9
-
-# Proxmox Backup Server
-./installimage-proxmox.sh "your.hostname.fqdn" pbs
+# Proxmox VE 8 / VE 9 / Backup Server
+INSTALL_CONFIRM=yes ./installimage-proxmox.sh "your.hostname.fqdn"
+INSTALL_CONFIRM=yes ./installimage-proxmox.sh "your.hostname.fqdn" pve9
+INSTALL_CONFIRM=yes ./installimage-proxmox.sh "your.hostname.fqdn" pbs
 ```
+
+Both installers wipe the partition table of the install target by default. They
+print the disks with model and serial and wait 10 seconds before doing it.
 
 ### OVH Installation
 
@@ -409,7 +478,7 @@ Detailed guide for OVH dedicated servers: [📖 OVH README](ovh/README.md)
 **Quick Setup:**
 1. Select **Install from OVH template** → **VPS Proxmox VE**
 2. Configure partitions (see guide for recommended layout)
-3. Set installation script URL: `https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh`
+3. Set installation script URL: `https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh`
 4. After installation, run LVM to ZFS conversion and networking scripts
 
 ---
@@ -421,9 +490,9 @@ Detailed guide for OVH dedicated servers: [📖 OVH README](ovh/README.md)
 Convert MDADM-based LVM to ZFS with automatic RAID level detection.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/lvm-2-zfs.sh -c -O lvm-2-zfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/lvm-2-zfs.sh -O lvm-2-zfs.sh
 chmod +x lvm-2-zfs.sh
-./lvm-2-zfs.sh [LVM_MOUNT_POINT]
+LVM2ZFS_CONFIRM=yes ./lvm-2-zfs.sh [LVM_MOUNT_POINT]
 ```
 
 **Creates:**
@@ -436,7 +505,7 @@ chmod +x lvm-2-zfs.sh
 Create ZFS pool from specified devices with automatic RAID detection.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/createzfs.sh -c -O createzfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/createzfs.sh -O createzfs.sh
 chmod +x createzfs.sh
 ZFS_CONFIRM=yes ./createzfs.sh poolname /dev/sda /dev/sdb
 ZFS_DRYRUN=yes ./createzfs.sh poolname /dev/sda /dev/sdb
@@ -449,28 +518,34 @@ Dry-run prints planned actions and exits non-zero without changes.
 | 1 | zfs | Single |
 | 2 | mirror | RAID1 |
 | 3-5 | raidz-1 | RAID5 |
-| 6-10 | raidz-2 | RAID6 |
-| 11+ | raidz-3 | RAID7 |
+| 6-11 | raidz-2 | RAID6 |
+| 12+ | raidz-3 | RAID7 |
 
 ### ZFS Cache and SLOG
 
 Add L2ARC cache and SLOG to existing ZFS pool.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/slog-cache-2-zfs.sh -c -O slog-cache-2-zfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/slog-cache-2-zfs.sh -O slog-cache-2-zfs.sh
 chmod +x slog-cache-2-zfs.sh
 ./slog-cache-2-zfs.sh poolname
 ```
+
+It looks for MD arrays mounted at `/ashimov/zfs-cache` and `/ashimov/zfs-slog`,
+which is where the Hetzner installimage script puts them. The pool must exist
+already.
 
 ### ZFS Benchmark
 
 Test ZFS performance with various write patterns.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/zfs/benchmark_zfs.sh -c -O benchmark_zfs.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/zfs/benchmark_zfs.sh -O benchmark_zfs.sh
 chmod +x benchmark_zfs.sh
-./benchmark_zfs.sh
+cd /path/to/zfs/dataset && ./benchmark_zfs.sh
 ```
+
+Writes about 20 GB into the current directory and cleans up afterwards.
 
 ---
 
@@ -481,7 +556,7 @@ chmod +x benchmark_zfs.sh
 Create routed vmbr0 network bridge for Proxmox VMs.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/network-configure.sh -c -O network-configure.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/networking/network-configure.sh -O network-configure.sh
 chmod +x network-configure.sh
 ./network-configure.sh
 ```
@@ -491,14 +566,17 @@ chmod +x network-configure.sh
 - **vmbr0 (Routed):** Public IPs routed through physical interface
 - Auto-detects interface, gateway, and netmask
 - Supports IPv4 and IPv6
-- Creates backup of existing configuration
+- Saves the old file as `/etc/network/interfaces.<timestamp>`
+
+The new config applies on reboot or `ifreload -a`. Read it before restarting
+networking, and keep a console open in case the detection guessed wrong.
 
 ### Tinc VPN
 
 Create private mesh VPN for cluster communication with multicast support.
 
 ```bash
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/networking/tincvpn.sh -c -O tincvpn.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/networking/tincvpn.sh -O tincvpn.sh
 chmod +x tincvpn.sh
 ./tincvpn.sh -h
 ```
@@ -530,10 +608,14 @@ chmod +x tincvpn.sh
 > ⚠️ **Security Warning:** Running Docker in LXC requires elevated privileges.
 
 ```bash
-curl https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/helpers/pve-enable-lxc-docker.sh --output /usr/sbin/pve-enable-lxc-docker
+curl https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/helpers/pve-enable-lxc-docker.sh --output /usr/sbin/pve-enable-lxc-docker
 chmod +x /usr/sbin/pve-enable-lxc-docker
-pve-enable-lxc-docker <container_id>
+LXC_DOCKER_CONFIRM=yes pve-enable-lxc-docker <container_id>
 ```
+
+It switches off AppArmor for that container, allows every device, drops no
+capabilities and mounts `/proc` and `/sys` read-write, then restarts it. On a
+shared host that is not an acceptable trade.
 
 > 💡 **Recommendation:** Use a dedicated VM for Docker instead of LXC containers.
 
@@ -546,8 +628,8 @@ pve-enable-lxc-docker <container_id>
 | Partition | Size | Filesystem | Mount Point |
 |-----------|------|------------|-------------|
 | Root | 40 GB | ext4 (RAID1) | / |
-| ZFS Cache* | 30 GB | ext4 (RAID1) | /xshok/zfs-cache |
-| ZFS SLOG* | 5 GB | ext4 (RAID1) | /xshok/zfs-slog |
+| ZFS Cache* | 30 GB | ext4 (RAID1) | /ashimov/zfs-cache |
+| ZFS SLOG* | 5 GB | ext4 (RAID1) | /ashimov/zfs-slog |
 | Swap | 16-64 GB** | swap | - |
 | Data | Remaining | xfs (LVM) | /var/lib/vz |
 
@@ -595,7 +677,7 @@ For security, always verify downloaded scripts before execution. Use SHA256 chec
 
 ```bash
 # Download the script
-wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/master/install-post.sh
+wget https://raw.githubusercontent.com/ashimov/proxmox-optimizer/v1.0.4/install-post.sh
 
 # Generate checksum and compare with published value
 sha256sum install-post.sh
@@ -612,6 +694,11 @@ Shell scripts:
 |--------|-------------------|---------------------------|
 | `install-post.sh` (remote download) | `XS_INSTALL_POST_SHA256` | `XS_ALLOW_REMOTE_INSTALL_POST` |
 | OVH RTM installer | `XS_OVHRTM_SHA256` | `XS_OVHRTM_ALLOW_UNVERIFIED` |
+| Proxmox APT signing key | `XS_PROXMOX_KEY_SHA256` | *(warns when empty)* |
+| Cisofy/Lynis APT signing key | `XS_CISOFY_KEY_SHA256` | *(warns when empty)* |
+| PVE edge kernel `.deb` | `PVE_EDGE_KERNEL_SHA256` | `PVE_EDGE_KERNEL_ALLOW_UNVERIFIED` |
+| NVIDIA container toolkit key | `NVIDIA_TOOLKIT_GPG_SHA256` | *(warns when empty)* |
+| NVIDIA container toolkit repo list | `NVIDIA_TOOLKIT_LIST_SHA256` | *(warns when empty)* |
 | Hetzner `installimage` post-install | `MY_POSTINSTALL_SHA256` | `MY_POSTINSTALL_ALLOW_UNVERIFIED` |
 | Hetzner VNC: Proxmox VE ISO | `MY_PVE_ISO_SHA256` | `MY_ISO_ALLOW_UNVERIFIED` |
 | Hetzner VNC: Proxmox Backup Server ISO | `MY_PBS_ISO_SHA256` | `MY_ISO_ALLOW_UNVERIFIED` |
@@ -621,9 +708,10 @@ Ansible role variables (set in `inventory/group_vars/all.yml` or `host_vars`):
 | Role | Variable | Purpose |
 |------|----------|---------|
 | `proxmox_security` | `xs_lynis_key_url` | Override the CISofy signing-key URL (defaults to upstream) |
-| `proxmox_security` | `xs_lynis_key_sha256` | Pinned SHA256 of the Lynis signing key (empty → trust TLS only, warns at runtime) |
-| `proxmox_nvidia` | `nvidia_docker_gpg_sha256` | Pinned SHA256 of the NVIDIA Docker GPG key |
-| `proxmox_nvidia` | `nvidia_docker_list_sha256` | Pinned SHA256 of the per-distro `nvidia-docker.list` |
+| `proxmox_security` | `xs_lynis_key_sha256` | Pinned SHA256 of the Lynis signing key (empty = TLS only, warns at runtime) |
+| `proxmox_nvidia` | `nvidia_toolkit_gpg_sha256` | Pinned SHA256 of the NVIDIA container toolkit signing key |
+| `proxmox_nvidia` | `nvidia_toolkit_list_sha256` | Pinned SHA256 of `nvidia-container-toolkit.list` |
+| `proxmox_base` | `proxmox_key_checksums` | Per-codename SHA256 of the Proxmox release key |
 
 ### Example: Secure Remote Installation
 
@@ -637,9 +725,15 @@ export XS_ALLOW_REMOTE_INSTALL_POST="yes"
 ```
 
 ```bash
-# Hetzner VNC installer: verify ISO before booting it
+# Hetzner VNC installer: verify the ISO before booting it, confirm explicitly,
+# and reach the installer console over an SSH tunnel (the VNC server is bound
+# to loopback because VNC auth only uses the first 8 password characters).
 export MY_PVE_ISO_SHA256="<sha256 from https://www.proxmox.com/en/downloads>"
-./vnc-install-proxmox.sh pve9
+INSTALL_CONFIRM=yes ./vnc-install-proxmox.sh pve9
+
+# from your workstation:
+ssh -N -L 5900:127.0.0.1:5900 root@<rescue-ip>
+# then point the VNC client at localhost:5900
 ```
 
 ### Other Safety Knobs
@@ -647,6 +741,12 @@ export MY_PVE_ISO_SHA256="<sha256 from https://www.proxmox.com/en/downloads>"
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `XS_CEPH_FAIL_HARD` | `no` | If `yes`, `install-post.sh` aborts when `pveceph install` fails or times out instead of just logging a warning. Recommended for unattended installs. |
+| `XS_COREDUMP` | `no` | Core dumps are disabled by default: a dump of a Proxmox daemon contains cluster keys and auth tickets in cleartext. Set to `yes` only while debugging. |
+| `XS_HUGEPAGES` | *(empty)* | Number of hugepages to preallocate. Empty means none - preallocated hugepages are locked away from normal allocation. |
+| `INSTALL_CONFIRM` | `no` | Required by both Hetzner installers before they touch a disk. |
+| `MY_VNC_BIND` | `127.0.0.1` | Address the VNC installer binds to. Keep it on loopback and use an SSH tunnel: VNC authentication only uses the first 8 characters of the password. |
+| `XS_CREATE_ADMIN_USER` | `no` | Whether the Debian to Proxmox converters create an `admin@pve` Administrator account. When `yes`, `XS_ADMIN_PASSWORD` must be set for non-interactive runs. |
+| `LVM2ZFS_CONFIRM` / `ZFS_CONFIRM` | `no` | Required by the destructive ZFS scripts. `ZFS_DRYRUN=yes` prints what would happen instead. |
 
 > ⚠️ **Important**: Never set `*_ALLOW_UNVERIFIED=yes` in production. Always use checksums.
 
