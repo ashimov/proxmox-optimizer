@@ -1,0 +1,33 @@
+---
+name: Feature request
+description: Suggest something the project should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: Manual steps, another tool, or nothing
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This belongs in an Ansible role rather than a shell script
+        - label: This would change the behaviour of an existing default

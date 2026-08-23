@@ -16,7 +16,7 @@ First off, thank you for considering contributing to Proxmox Optimizer! It's peo
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by our commitment to providing a welcoming and inclusive environment. Please be respectful and constructive in all interactions.
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Short version: be decent to people.
 
 ---
 
@@ -25,6 +25,9 @@ This project and everyone participating in it is governed by our commitment to p
 ### 🐛 Reporting Bugs
 
 Before creating bug reports, please check existing issues to avoid duplicates.
+
+Found a security problem instead? Do not open an issue. See
+[SECURITY.md](SECURITY.md) for how to report it privately.
 
 **When reporting a bug, include:**
 

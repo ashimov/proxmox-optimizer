@@ -816,6 +816,10 @@ ssh -N -L 5900:127.0.0.1:5900 root@<rescue-ip>
 
 Contributions are welcome! Please feel free to submit Pull Requests.
 
+Found a security problem? Do not open an issue, see [SECURITY.md](SECURITY.md).
+Everything else: [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)

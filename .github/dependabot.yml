@@ -1,0 +1,22 @@
+---
+version: 2
+updates:
+  # Actions are pinned by SHA, which is right, and means they never move on
+  # their own. This is what tells us when one should.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+
+  - package-ecosystem: pip
+    directory: /ansible
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies

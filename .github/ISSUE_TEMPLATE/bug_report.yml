@@ -1,0 +1,65 @@
+---
+name: Bug report
+description: Something did not work the way it says it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If this is a security problem, do not file it here. See
+        [SECURITY.md](../blob/main/SECURITY.md) for how to report it privately.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag or commit you are running
+      placeholder: v1.0.4
+    validations:
+      required: true
+
+  - type: input
+    id: proxmox
+    attributes:
+      label: Proxmox and Debian version
+      placeholder: PVE 8.3 on Bookworm
+    validations:
+      required: true
+
+  - type: input
+    id: component
+    attributes:
+      label: Which script or role
+      placeholder: zfs/lvm-2-zfs.sh, or the proxmox_firewall role
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Paste the output. For Ansible, the failing task and its message.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The exact command, including any variables you set
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Inventory snippets, install-post.env contents (with secrets removed)

@@ -37,6 +37,12 @@ section before upgrading an existing host.
   `proxmox.yml` in check mode plus a set of rendering assertions. It found four
   bugs on the first run, listed below.
 - `ansible/requirements.txt` for the control node.
+- `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue and pull request templates, and a
+  dependabot config. The actions are pinned by SHA, which means nothing updates
+  them unless something says so.
+- Tags for 1.0.0, 1.0.2 and 1.0.3, which shipped without any. That is why the
+  tag list used to jump from v1.0.1 to v1.0.4. The release workflow skips tags
+  from before it existed instead of failing on them.
 
 ### Breaking
 
@@ -218,6 +224,8 @@ And the rest:
 ### Changed
 
 - All documented download URLs point at a release tag instead of `master`.
+- Dates on the 1.0.0 and 1.0.1 entries were a year early, corrected against the
+  commits they shipped from.
 - `inventory/hosts.ini.example` defines a usable `[proxmox]` group.
 - Documentation updated across the board: README, ansible/README, and the
   per-directory ones for hetzner, zfs, networking, nvidia, helpers and

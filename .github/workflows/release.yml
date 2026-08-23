@@ -53,9 +53,11 @@ jobs:
       - name: Sign SHA256SUMS
         if: steps.guard.outputs.build == 'true'
         run: |
+          # .sig/.pem for cosign 2.x, .bundle for 3.x which deprecates them
           cosign sign-blob --yes \
             --output-signature SHA256SUMS.sig \
             --output-certificate SHA256SUMS.pem \
+            --bundle SHA256SUMS.bundle \
             SHA256SUMS
 
       - name: Write release notes
@@ -96,4 +98,5 @@ jobs:
             SHA256SUMS
             SHA256SUMS.sig
             SHA256SUMS.pem
+            SHA256SUMS.bundle
           fail_on_unmatched_files: true
