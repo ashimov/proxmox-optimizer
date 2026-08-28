@@ -2,5 +2,5 @@
 #
 # netaddr is not optional: the ipaddr filter from ansible.utils needs it, and
 # the networking, firewall and provider roles all use it.
-ansible>=9,<11
+ansible>=12.3.0,<13
 netaddr>=0.9
